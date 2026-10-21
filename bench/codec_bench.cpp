@@ -7,7 +7,7 @@
 // machine is in bench mode and the build is clean (lockfree-ipc note 004).
 // Method as lockfree-ipc's record cost: each call timed between start() and
 // stop(), unsubtracted, beside an empty window ("none") for the clock's own
-// cost; CPU 2; inputs cycled through 1,024 different messages.
+// cost; CPU 2; 1,024 different messages visited in a random order.
 #include "representation_a.hpp"
 
 #include <fixgw/decode.hpp>
@@ -88,12 +88,27 @@ template <std::size_t W>
     return ix.template build<true>(p, n);
 }
 
-// Per-call cost of op(i), i cycling over the inputs.
+// The order inputs are visited in: random, fixed by its seed, read outside the
+// timed window. Cycling through the inputs in a fixed order let the branch
+// predictor memorise the cycle, case by case, giving a fast mode real traffic
+// never sees (note 009, Review).
+const std::vector<std::uint32_t>& visit_order() {
+    static const std::vector<std::uint32_t> order = [] {
+        std::vector<std::uint32_t> o(warmup + samples);
+        std::mt19937_64 rng(3);
+        for (auto& x : o) x = static_cast<std::uint32_t>(rng() % inputs);
+        return o;
+    }();
+    return order;
+}
+
+// Per-call cost of op(j), j in the random visit order.
 template <typename Op>
 overhead time_op(Op&& op) {
     std::vector<ticks> deltas(samples);
+    const auto& order = visit_order();
     for (std::size_t i = 0; i < warmup + samples; ++i) {
-        const std::size_t j = i % inputs;
+        const std::size_t j = order[i];
         const ticks a = start();
         op(j);
         const ticks b = stop();
@@ -330,7 +345,15 @@ int main(int argc, char** argv) {
     // past its end.
     constexpr std::size_t stream_messages = 100'000;
     std::vector<char> stream;
-    for (std::size_t i = 0; i < stream_messages; ++i) stream.insert(stream.end(), nos_s[i % inputs].begin(), nos_s[i % inputs].end());
+    // The burst is a random sequence of the inputs, so it does not repeat with
+    // a short period either.
+    std::vector<std::uint32_t> burst_order(stream_messages);
+    {
+        std::mt19937_64 rng(4);
+        for (auto& x : burst_order) x = static_cast<std::uint32_t>(rng() % inputs);
+    }
+    for (std::size_t i = 0; i < stream_messages; ++i)
+        stream.insert(stream.end(), nos_s[burst_order[i]].begin(), nos_s[burst_order[i]].end());
     const std::size_t stream_bytes = stream.size();
     stream.resize(stream_bytes + 64, '\x7f');
     constexpr std::size_t batch_bytes = 16 * 1024;
@@ -338,7 +361,7 @@ int main(int argc, char** argv) {
     {
         std::size_t at = 0, start_of_batch = 0;
         for (std::size_t i = 0; i < stream_messages; ++i) {
-            const std::size_t len = nos_s[i % inputs].size();
+            const std::size_t len = nos_s[burst_order[i]].size();
             if (at + len - start_of_batch > batch_bytes) {
                 batch_end.push_back(at);
                 start_of_batch = at;

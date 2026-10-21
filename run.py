@@ -123,8 +123,9 @@ def codec_section(lf, note, runs):
     return [f"## Codec (note {note})", "",
             f"Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty "
             f"window, the clock's own cost. CPU {c0['cpu']}, {any_case['samples']:,} samples per case, "
-            f"{any_case['warmup_discarded']:,} warm-up discarded, inputs cycled over {c0['inputs']:,} different "
-            f"messages, each in its own 512-byte slot. Decoding: A, fields copied into a hash map (the conventional "
+            f"{any_case['warmup_discarded']:,} warm-up discarded, {c0['inputs']:,} different messages visited in a "
+            f"random order (cycling in a fixed order lets the branch predictor memorise the cycle), each in its own "
+            f"512-byte slot. Decoding: A, fields copied into a hash map (the conventional "
             f"design, the baseline, note 002); scalar, views over the buffer found a byte at a time; SIMD, the "
             f"same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a buffer "
             f"with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message (note "
@@ -133,7 +134,7 @@ def codec_section(lf, note, runs):
             f"order. Harness: lockfree-ipc `{c0['lockfree_ipc_commit'][:7]}`.", "",
             lf.table(["Operation", "Message", "Path", "Bytes", "p50", "p99", "p99.9", "max"], codec_rows(lf, runs)),
             "",
-            (f"Throughput, {t0['operation']}, {t0['messages']:,} messages in batches of whole messages up to "
+            (f"Throughput, {t0['operation']}, {t0['messages']:,} messages (a random sequence of the inputs) in batches of whole messages up to "
              f"{t0['batch_bytes']:,} bytes (what one socket read hands the decoder; two-stage indexes each batch "
              f"inside the timing), 21 repeats per run, million messages per second:" if t0["batch_bytes"] else
              f"Throughput, {t0['operation']}, {t0['messages']:,} messages, 21 repeats per run, million "
