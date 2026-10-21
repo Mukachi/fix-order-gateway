@@ -13,6 +13,12 @@ endif()
 add_library(fixgw INTERFACE)
 target_include_directories(fixgw INTERFACE include)
 target_compile_options(fixgw INTERFACE -Wall -Wextra -Wpedantic -Werror)
+# x86-64-v3 (AVX2, BMI1/2, LZCNT, MOVBE, FMA): the codec's SIMD paths (note 009).
+# A named level, recorded in every run's flags; other targets use the scalar paths.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  set(FIXGW_ARCH_FLAGS -march=x86-64-v3)
+  target_compile_options(fixgw INTERFACE ${FIXGW_ARCH_FLAGS})
+endif()
 
 find_package(Threads REQUIRED)
 find_package(Python3 COMPONENTS Interpreter)
@@ -37,7 +43,7 @@ string(TOUPPER "${CMAKE_BUILD_TYPE}" build_type_upper)
 add_custom_target(build_info ALL
   COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/generated/lfipc/build_info.hpp
           -DBUILD_TYPE=${CMAKE_BUILD_TYPE}
-          "-DFLAGS=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${build_type_upper}} -Wall -Wextra -Wpedantic -Werror"
+          "-DFLAGS=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${build_type_upper}} -Wall -Wextra -Wpedantic -Werror ${FIXGW_ARCH_FLAGS}"
           -P ${lockfree_ipc_SOURCE_DIR}/cmake/build_info.cmake
   BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/lfipc/build_info.hpp
   COMMENT "Recording build provenance")

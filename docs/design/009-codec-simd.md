@@ -1,6 +1,6 @@
 # 009 — Codec: SIMD scanning and two-stage indexing
 
-**Status:** Draft · **Updated:** 2026-10-21
+**Status:** Agreed · **Updated:** 2026-10-21
 
 ## Proposal
 
@@ -91,3 +91,4 @@ checked again in these runs.
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-21 | Draft | Written for review |
+| 2026-10-21 | Agreed | Approved by Shep: two measured steps (SIMD scanning; two-stage indexing, single message and burst); `x86-64-v3` at compile time, scalar elsewhere; 64-byte padded receive buffer, scalar tail when unpadded; correctness by equivalence, differential fuzzing; encoding and AVX-512 out of scope; three runs published beside note 002's |
