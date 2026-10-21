@@ -42,8 +42,8 @@ inline std::string message(const std::string& body, int body_length_delta = 0, i
 // A NewOrderSingle body, as an order path would send it.
 inline std::string new_order_body(int seq = 1) {
     return "35=D|49=CLIENT|56=VENUE|34=" + std::to_string(seq) +
-           "|52=20261021-09:30:00.123456|11=ORD-000001|1=ACC1|55=VOD.L|54=1|"
-           "60=20261021-09:30:00.123456|38=1000|40=2|44=72.53|59=0|";
+           "|52=20261021-09:30:00.123|11=ORD-000001|1=ACC1|55=VOD.L|54=1|"
+           "60=20261021-09:30:00.123|38=1000|40=2|44=72.53|59=0|";
 }
 
 }  // namespace fixgw::test

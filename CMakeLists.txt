@@ -46,8 +46,17 @@ target_include_directories(lfipc SYSTEM INTERFACE ${lockfree_ipc_SOURCE_DIR}/inc
 target_compile_definitions(lfipc INTERFACE FIXGW_LFIPC_COMMIT="${FIXGW_LFIPC_COMMIT}")
 add_dependencies(lfipc build_info)
 
-foreach(t framing_test decode_test)
+foreach(t framing_test decode_test encode_test)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE fixgw)
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+add_executable(hot_path_subject tests/hot_path_subject.cpp)
+target_link_libraries(hot_path_subject PRIVATE fixgw)
+if(Python3_FOUND AND CMAKE_OBJDUMP AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64"
+   AND NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize")
+  add_test(NAME check_hot_path
+           COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/tests/check_hot_path.py
+                   ${CMAKE_OBJDUMP} $<TARGET_FILE:hot_path_subject>)
+endif()
