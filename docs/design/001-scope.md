@@ -139,7 +139,7 @@ The repo as a whole, checked as the notes reach Measured:
 ## Tasks
 
 - [x] Shep: empty GitHub repo `Mukachi/fix-order-gateway` (private)
-- [ ] Read the QuickFIX licence; record the decision here
+- [x] Read the QuickFIX licence; record the decision here
 - [ ] Notes 002–008, one at a time, each agreed before its code
 
 ## Review
@@ -148,3 +148,4 @@ The repo as a whole, checked as the notes reach Measured:
 |---|---|---|
 | 2026-10-21 | Draft | Written for review |
 | 2026-10-21 | Agreed | Approved by Shep: both roles; sans-I/O core; one thread per session; `lockfree-ipc` fetched at a pinned commit; QuickFIX v1.16.0 as baseline and interoperability partner (licence read first); out of scope as listed; notes 002–008 in order. Added at Shep's request: the two state machines (session per connection, order per ClOrdID), the in-doubt window as the centre of the design, event sourcing with the journal as source of truth and databases off the hot path, and measured alternatives (codec representations, four durability strategies with their guarantees, single loop against a Disruptor-style pipeline), with S6 and S7 |
+| 2026-10-21 | Agreed | QuickFIX licence read: the QuickFIX Software License 1.0 (BSD-style). Its conditions bind redistribution (keep the notice; acknowledge quickfixengine.org) and derived products (no endorsement by, or naming after, QuickFIX). We fetch it into `build/` at tag v1.16.0 (commit 2ce8a60) to run as a baseline and interoperability partner, and redistribute nothing; the gateway is not derived from it, and naming it in a measured comparison is a statement of fact. Rule adopted: QuickFIX's source is not read while designing; it is a black box we run against, so the gateway stays written from the specification |
