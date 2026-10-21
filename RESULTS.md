@@ -14,18 +14,22 @@ Every run met note 004's bench-mode conditions (each file's `environment.bench_m
 
 ## Codec (note 002)
 
-Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty window, the clock's own cost. CPU 2, 1,000,000 samples per case, 100,000 warm-up discarded, inputs cycled over 1,024 different messages. A: fields copied into a hash map (the conventional design, the baseline); B: views over the receive buffer, fields appended to a fixed buffer; C: a pre-encoded NewOrderSingle with fixed-width slots. Every encoder formats the timestamp and ClOrdID per order. Harness: lockfree-ipc `efbccdc`.
+Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty window, the clock's own cost. CPU 2, 1,000,000 samples per case, 100,000 warm-up discarded, inputs cycled over 1,024 different messages, each in its own 512-byte slot. Decoding: A, fields copied into a hash map (the conventional design, the baseline, note 002); scalar, views over the buffer found a byte at a time; SIMD, the same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a buffer with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message (note 009). Encoding (note 002): A, fields as strings in a vector; B, appended to a fixed buffer; C, a pre-encoded NewOrderSingle with fixed-width slots; each formats the timestamp and ClOrdID per order. Harness: lockfree-ipc `efbccdc`.
 
-| Operation | Message | Repr. | Bytes | p50 | p99 | p99.9 | max |
+| Operation | Message | Path | Bytes | p50 | p99 | p99.9 | max |
 |---|---|---|---|---|---|---|---|
 | empty window: start(); stop() | - | - | – | 19 | 20 | 20 | 20 |
-| frame and decode | NewOrderSingle | B | 165 | 203–213 | 222–242 | 260–276 | 579–675 |
 | frame and decode | NewOrderSingle | A | 165 | 958–1,210 | 1,011–1,333 | 1,023–1,367 | 1,413–1,686 |
-| frame and decode | ExecutionReport | B | 230 | 283–478 | 310–568 | 339–597 | 652–986 |
 | frame and decode | ExecutionReport | A | 230 | 1,592–1,974 | 1,733–2,207 | 1,788–2,274 | 2,065–2,647 |
-| frame and decode | Heartbeat | B | 79 | 116–137 | 142–166 | 153–305 | 503–606 |
 | encode | NewOrderSingle | A | 165 | 1,101–1,120 | 1,140–1,159 | 1,156–1,173 | 2,331–2,375 |
 | encode | NewOrderSingle | B | 165 | 325 | 350–362 | 368–376 | 755–1,572 |
 | encode | NewOrderSingle | C | 190 | 187–190 | 190–192 | 192–196 | 512–571 |
+| frame and decode | NewOrderSingle | B | 165 | 203–213 | 222–242 | 260–276 | 579–675 |
+| frame and decode | ExecutionReport | B | 230 | 283–478 | 310–568 | 339–597 | 652–986 |
+| frame and decode | Heartbeat | B | 79 | 116–137 | 142–166 | 153–305 | 503–606 |
 
-Throughput, frame and decode (B), NewOrderSingle, coalesced, 100,000 messages, 21 repeats per run: median 3.41–3.43 million messages per second (slowest repeat 3.41M, fastest 3.43M).
+Throughput, frame and decode (B), NewOrderSingle, coalesced, 100,000 messages, 21 repeats per run, million messages per second:
+
+| Path | Median | Slowest repeat | Fastest repeat |
+|---|---|---|---|
+| B | 3.41–3.43 | 3.41 | 3.43 |

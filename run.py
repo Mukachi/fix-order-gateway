@@ -82,8 +82,13 @@ def load_sets(root, lf, lf_root):
     return {n: (m[n].get("note", ""), validate(root, lf, lf_root, n, m[n]["runs"])) for n in SETS if n in m}
 
 
-CASE_ORDER = ("none", "decode_b_nos", "decode_a_nos", "decode_b_er", "decode_a_er", "decode_b_hb",
-              "encode_a_nos", "encode_b_nos", "encode_c_nos")
+PATHS = ("a", "scalar", "simd", "simd_padded", "index")
+CASE_ORDER = (("none",)
+              + tuple(f"{op}_{m}" for m in ("nos", "er", "hb")
+                      for op in ("frame_scalar", "frame_simd") + tuple(f"decode_{p}" for p in PATHS))
+              + ("encode_a_nos", "encode_b_nos", "encode_c_nos")
+              # Note 002's runs, before the paths were split (B is the scalar path).
+              + ("decode_b_nos", "decode_b_er", "decode_b_hb"))
 
 
 def codec_rows(lf, runs):
@@ -99,24 +104,41 @@ def codec_rows(lf, runs):
     return rows
 
 
+def throughput_rows(lf, runs):
+    t = [d["codec"]["throughput"] for _, d in runs]
+    if "paths" not in t[0]:  # note 002's runs: one path, whole stream, no batches
+        t = [{**x, "batch_bytes": 0, "paths": {"B": x}} for x in t]
+    rows = []
+    for path in t[0]["paths"]:
+        xs = [x["paths"][path] for x in t]
+        rows.append([path, lf.rng([x["p50_per_s"] / 1e6 for x in xs], lambda v: f"{v:.2f}"),
+                     f"{min(x['min_per_s'] for x in xs) / 1e6:.2f}", f"{max(x['max_per_s'] for x in xs) / 1e6:.2f}"])
+    return t[0], rows
+
+
 def codec_section(lf, note, runs):
     c0 = runs[0][1]["codec"]
     any_case = c0["cases"]["none"]
-    t = [d["codec"]["throughput"] for _, d in runs]
+    t0, trows = throughput_rows(lf, runs)
     return [f"## Codec (note {note})", "",
             f"Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty "
             f"window, the clock's own cost. CPU {c0['cpu']}, {any_case['samples']:,} samples per case, "
             f"{any_case['warmup_discarded']:,} warm-up discarded, inputs cycled over {c0['inputs']:,} different "
-            f"messages. A: fields copied into a hash map (the conventional design, the baseline); B: views over "
-            f"the receive buffer, fields appended to a fixed buffer; C: a pre-encoded NewOrderSingle with "
-            f"fixed-width slots. Every encoder formats the timestamp and ClOrdID per order. Harness: "
-            f"lockfree-ipc `{c0['lockfree_ipc_commit'][:7]}`.", "",
-            lf.table(["Operation", "Message", "Repr.", "Bytes", "p50", "p99", "p99.9", "max"], codec_rows(lf, runs)),
+            f"messages, each in its own 512-byte slot. Decoding: A, fields copied into a hash map (the conventional "
+            f"design, the baseline, note 002); scalar, views over the buffer found a byte at a time; SIMD, the "
+            f"same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a buffer "
+            f"with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message (note "
+            f"009). Encoding (note 002): A, fields as strings in a vector; B, appended to a fixed buffer; C, a "
+            f"pre-encoded NewOrderSingle with fixed-width slots; each formats the timestamp and ClOrdID per "
+            f"order. Harness: lockfree-ipc `{c0['lockfree_ipc_commit'][:7]}`.", "",
+            lf.table(["Operation", "Message", "Path", "Bytes", "p50", "p99", "p99.9", "max"], codec_rows(lf, runs)),
             "",
-            f"Throughput, {t[0]['operation']}, {t[0]['messages']:,} messages, {t[0]['repeats']} repeats per run: "
-            f"median {lf.rng([x['p50_per_s'] / 1e6 for x in t], lambda v: f'{v:.2f}')} million messages per "
-            f"second (slowest repeat {min(x['min_per_s'] for x in t) / 1e6:.2f}M, fastest "
-            f"{max(x['max_per_s'] for x in t) / 1e6:.2f}M).", ""]
+            (f"Throughput, {t0['operation']}, {t0['messages']:,} messages in batches of whole messages up to "
+             f"{t0['batch_bytes']:,} bytes (what one socket read hands the decoder; two-stage indexes each batch "
+             f"inside the timing), 21 repeats per run, million messages per second:" if t0["batch_bytes"] else
+             f"Throughput, {t0['operation']}, {t0['messages']:,} messages, 21 repeats per run, million "
+             f"messages per second:"), "",
+            lf.table(["Path", "Median", "Slowest repeat", "Fastest repeat"], trows), ""]
 
 
 def results_md(lf, sets):
@@ -138,7 +160,7 @@ def readme_blocks(lf, sets):
     if "codec" not in sets:
         return {"codec-summary": "Codec figures: not yet measured (design note 002).\n"}
     runs = sets["codec"][1]
-    rows = [r for r in codec_rows(lf, runs) if r[1] == "NewOrderSingle"]
+    rows = [r for r in codec_rows(lf, runs) if r[1] == "NewOrderSingle" and r[0] != "frame"]
     return {"codec-summary": lf.table(["Operation", "Message", "Repr.", "Bytes", "p50", "p99", "p99.9", "max"], rows) +
             f"\n\nNs per call, range over {len(runs)} runs, clock cost included (about the empty window's p50). "
             f"Full tables and conditions: [RESULTS.md](RESULTS.md).\n"}
