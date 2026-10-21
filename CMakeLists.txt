@@ -60,3 +60,20 @@ if(Python3_FOUND AND CMAKE_OBJDUMP AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AM
            COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/tests/check_hot_path.py
                    ${CMAKE_OBJDUMP} $<TARGET_FILE:hot_path_subject>)
 endif()
+
+# Fuzzing (note 002, S7): clang only, a separate build directory, e.g.
+#   CXX=clang++ cmake -S . -B build-fuzz -DFIXGW_FUZZ=ON && cmake --build build-fuzz --target fuzz_codec
+option(FIXGW_FUZZ "Build the libFuzzer targets (clang)" OFF)
+if(FIXGW_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "FIXGW_FUZZ needs clang (libFuzzer)")
+  endif()
+  add_executable(fuzz_codec fuzz/fuzz_codec.cpp)
+  target_link_libraries(fuzz_codec PRIVATE fixgw)
+  target_compile_options(fuzz_codec PRIVATE -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
+  target_link_options(fuzz_codec PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+
+add_executable(codec_bench bench/codec_bench.cpp)
+target_link_libraries(codec_bench PRIVATE fixgw lfipc Threads::Threads)
+target_compile_definitions(codec_bench PRIVATE LFIPC_RESULTS_DIR="${CMAKE_SOURCE_DIR}/results")

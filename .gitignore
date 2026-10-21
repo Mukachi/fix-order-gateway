@@ -1,4 +1,5 @@
 build/
+build-fuzz/
 build-ci-*/
 .cache/
 __pycache__/
