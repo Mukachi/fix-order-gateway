@@ -15,4 +15,4 @@ Only Spec and Review are mandatory. Any section can be one line.
 
 | # | Component | Status |
 |---|---|---|
-| [001](design/001-scope.md) | Scope and plan | Draft |
+| [001](design/001-scope.md) | Scope and plan | Agreed |
