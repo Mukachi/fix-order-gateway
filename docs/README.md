@@ -16,4 +16,4 @@ Only Spec and Review are mandatory. Any section can be one line.
 | # | Component | Status |
 |---|---|---|
 | [001](design/001-scope.md) | Scope and plan | Agreed |
-| [002](design/002-codec.md) | Codec | Draft |
+| [002](design/002-codec.md) | Codec | Agreed |

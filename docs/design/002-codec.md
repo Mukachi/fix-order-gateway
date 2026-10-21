@@ -1,6 +1,6 @@
 # 002 — Codec
 
-**Status:** Draft · **Updated:** 2026-10-21
+**Status:** Agreed · **Updated:** 2026-10-21
 
 ## Proposal
 
@@ -124,3 +124,4 @@ measured with GCC).
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-21 | Draft | Written for review |
+| 2026-10-21 | Agreed | Approved by Shep: three representations measured (A map baseline, B views as the default decoder, C pre-encoded templates, C also run against QuickFIX's acceptor); the codec stays type-blind, groups returned uninterpreted; libFuzzer with clang for fuzzing only, GCC for the build and measurements |
