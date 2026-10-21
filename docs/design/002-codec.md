@@ -112,8 +112,8 @@ measured with GCC).
 
 ## Tasks
 
-- [ ] CMake skeleton; `lockfree-ipc` fetched at a pinned commit; warnings as errors; CTest
-- [ ] Framer and B decoder, S1–S5 tests
+- [x] CMake skeleton; `lockfree-ipc` fetched at a pinned commit; warnings as errors; CTest
+- [x] Framer and B decoder, S1–S4 tests (S5 with the encoders)
 - [ ] Encoders B and C; S5, S6
 - [ ] Representation A, for measurement only
 - [ ] Fuzzer (per the decision above); S7
@@ -125,3 +125,4 @@ measured with GCC).
 |---|---|---|
 | 2026-10-21 | Draft | Written for review |
 | 2026-10-21 | Agreed | Approved by Shep: three representations measured (A map baseline, B views as the default decoder, C pre-encoded templates, C also run against QuickFIX's acceptor); the codec stays type-blind, groups returned uninterpreted; libFuzzer with clang for fuzzing only, GCC for the build and measurements |
+| 2026-10-21 | Built (partial) | Skeleton: `lockfree-ipc` fetched at `efbccdc` (headers only; its own project not added, so no Boost or baselines here); its provenance script run against this repo, so a run records the gateway's commit, with the harness commit beside it (`FIXGW_LFIPC_COMMIT`). `framing.hpp`: `frame(p, n, max_frame)` reads BeginString and BodyLength, then checks MsgType third and `10=ddd` SOH exactly where BodyLength puts it, with the right sum; a body is never scanned for its end. Garbled input is skipped to the next possible `8=FIX.4.4` SOH `9=`. `decode.hpp`: one pass to (tag, offset, length) views; header, body and trailer order; header tags not repeated (the NoHops group excepted); data fields (90/91, 212/213, 93/89, 95/96) read by length. Tests: S1 every two-read split of three messages, byte by byte, and 2,000 random splits of six; S2 each garbled fault (wrong BeginString, BodyLength not a number or empty, MsgType not third, CheckSum wrong, BodyLength too short or too long, non-FIX bytes, a frame longer than the buffer), each followed by the next message framed; S3 each structural fault with its SessionRejectReason and RefTagID; S4 RawData containing SOH read whole. Found while testing: a data length can reach over the trailer the framer found, leaving a message with no CheckSum field; the decoder now requires the trailer to be the last field (test added). Clean under ASan and UBSan |
