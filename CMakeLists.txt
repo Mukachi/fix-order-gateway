@@ -52,7 +52,7 @@ target_include_directories(lfipc SYSTEM INTERFACE ${lockfree_ipc_SOURCE_DIR}/inc
 target_compile_definitions(lfipc INTERFACE FIXGW_LFIPC_COMMIT="${FIXGW_LFIPC_COMMIT}")
 add_dependencies(lfipc build_info)
 
-foreach(t framing_test decode_test encode_test representation_a_test)
+foreach(t framing_test decode_test encode_test representation_a_test simd_equivalence_test)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE fixgw)
   add_test(NAME ${t} COMMAND ${t})

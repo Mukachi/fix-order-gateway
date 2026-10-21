@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <type_traits>
 
 namespace fixgw {
 
@@ -48,7 +49,7 @@ public:
     std::string_view bytes() const noexcept { return {base_, length_}; }
 
 private:
-    template <std::size_t N>
+    template <std::size_t N, class S>
     friend struct decoder;
     const char* base_ = nullptr;
     std::size_t length_ = 0, count_ = 0;
@@ -108,7 +109,46 @@ inline constexpr std::uint32_t data_tag_for(std::uint32_t t) noexcept {
 
 }  // namespace detail
 
-template <std::size_t MaxFields = 256>
+// How the decoder finds the SOH that ends a value (note 009). Each returns the
+// first SOH at or after `i` in p[0, n), or n if there is none.
+namespace scan {
+
+// A byte at a time: note 002's decoder.
+struct scalar {
+    static std::size_t find_soh(const char* p, std::size_t i, std::size_t n) noexcept {
+        while (i < n && p[i] != soh) ++i;
+        return i;
+    }
+};
+
+// 32 bytes at a time: compare with SOH, take the mask, count trailing zeros.
+// `Padded`: the caller guarantees at least 32 readable bytes past p + n (the
+// receive buffer's padding), so every load is a full one and bits past n are
+// masked off. Otherwise whole blocks only, and the last few bytes one at a time.
+template <bool Padded>
+struct simd {
+    static std::size_t find_soh(const char* p, std::size_t i, std::size_t n) noexcept {
+#if defined(__AVX2__)
+        const __m256i s = _mm256_set1_epi8(soh);
+        for (; Padded ? i < n : i + 32 <= n; i += 32) {
+            const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p + i));
+            auto mask = static_cast<std::uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, s)));
+            if constexpr (Padded)
+                if (n - i < 32) mask &= (std::uint32_t{1} << (n - i)) - 1;
+            if (mask) return i + static_cast<std::size_t>(_tzcnt_u32(mask));
+        }
+        if constexpr (Padded) return n;
+#endif
+        return scalar::find_soh(p, i, n);
+    }
+};
+
+// The default: SIMD where the build has it, unpadded (safe for any view).
+using best = std::conditional_t<simd_available, simd<false>, scalar>;
+
+}  // namespace scan
+
+template <std::size_t MaxFields = 256, class Scan = scan::best>
 struct decoder {
     // Decodes a frame that `frame()` reported complete. One pass, no copies,
     // no allocation: each field becomes (tag, offset, length).
@@ -144,7 +184,7 @@ struct decoder {
                 i += data_length;
                 data_tag = 0;
             } else {
-                while (i < n && p[i] != soh) ++i;
+                i = Scan::find_soh(p, i, n);
                 if (i == n) return fail(reject_reason::other, tag, "field not ended by SOH");
                 value_length = i - value_start;
             }

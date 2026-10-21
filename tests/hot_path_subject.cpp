@@ -6,12 +6,26 @@
 
 #include <cstdio>
 
-extern "C" [[gnu::noinline]] fixgw::frame_result fixgw_frame(const char* p, std::size_t n) {
-    return fixgw::frame(p, n, 4096);
+// Each implementation behind its own symbol; `flatten` inlines what each
+// calls, so the check sees the whole path (note 009).
+extern "C" [[gnu::noinline, gnu::flatten]] fixgw::frame_result fixgw_frame(const char* p, std::size_t n) {
+    return fixgw::frame_scalar(p, n, 4096);
+}
+extern "C" [[gnu::noinline, gnu::flatten]] fixgw::frame_result fixgw_frame_simd(const char* p, std::size_t n) {
+    return fixgw::frame_simd(p, n, 4096);
 }
 
-extern "C" [[gnu::noinline]] fixgw::decode_result fixgw_decode(const char* p, std::size_t n, fixgw::message_view<>& v) {
-    return fixgw::decode(p, n, v);
+extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode(const char* p, std::size_t n,
+                                                                            fixgw::message_view<>& v) {
+    return fixgw::decoder<256, fixgw::scan::scalar>::decode(p, n, v);
+}
+extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_simd(const char* p, std::size_t n,
+                                                                                 fixgw::message_view<>& v) {
+    return fixgw::decoder<256, fixgw::scan::simd<false>>::decode(p, n, v);
+}
+extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_simd_padded(const char* p, std::size_t n,
+                                                                                        fixgw::message_view<>& v) {
+    return fixgw::decoder<256, fixgw::scan::simd<true>>::decode(p, n, v);
 }
 
 // Encoder B: a NewOrderSingle, field by field.
@@ -47,7 +61,9 @@ int main(int argc, char**) {
     const std::size_t n = fixgw_encode_b(buf, sizeof(buf), static_cast<std::uint64_t>(argc), 100, 7253);
     fixgw::message_view<> v;
     const bool ok = fixgw_frame(buf + (sizeof(buf) - n), 0).status != fixgw::frame_status::complete &&
-                    fixgw_decode(buf, 0, v).ok == false;
+                    fixgw_frame_simd(buf, 0).status != fixgw::frame_status::complete &&
+                    fixgw_decode(buf, 0, v).ok == false && fixgw_decode_simd(buf, 0, v).ok == false &&
+                    fixgw_decode_simd_padded(buf, 0, v).ok == false;
     static fixgw::new_order_template t({"CLIENT", "VENUE", "ACC1", "VOD.L", '1', '2', '0', 2});
     std::printf("%zu %zu %d\n", n, fixgw_encode_c(t, 1, 0, 1, 1, 1), ok);
     return 0;

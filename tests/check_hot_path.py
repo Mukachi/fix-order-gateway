@@ -2,7 +2,8 @@
 
 Usage: check_hot_path.py <objdump> <hot_path_subject binary>
 
-The framer, the decoder (B) and the template encoder (C) make no call at all.
+The framers and the template encoder (C) make no call at all; the decoders
+(scalar and SIMD, note 009) none but the stack protector's abort.
 Encoder B may call memcpy (copying values of variable length) and
 __stack_chk_fail (the stack protector's abort), nothing else: no allocation,
 no system call. No subject contains a syscall instruction.
@@ -11,9 +12,13 @@ import re
 import subprocess
 import sys
 
+STACK = {"__stack_chk_fail@plt"}  # the stack protector's abort: never taken on a valid path
 SUBJECTS = {
     "fixgw_frame": set(),
-    "fixgw_decode": set(),
+    "fixgw_frame_simd": set(),
+    "fixgw_decode": STACK,
+    "fixgw_decode_simd": STACK,
+    "fixgw_decode_simd_padded": STACK,
     "fixgw_encode_c": set(),
     "fixgw_encode_b": {"memcpy@plt", "__stack_chk_fail@plt"},
 }

@@ -1,24 +1,37 @@
-// Tests for include/fixgw/decode.hpp. Spec: docs/design/002-codec.md (S3, S4)
+// Tests for include/fixgw/decode.hpp. Spec: docs/design/002-codec.md (S3, S4);
+// every check runs against each decoder: scalar, SIMD, SIMD on a padded buffer
+// (note 009, S2).
 #include "fix_text.hpp"
 
 #include <fixgw/decode.hpp>
 
 #include <string>
+#include <vector>
 
 namespace {
 
 using namespace fixgw;
 using fixgw::test::check;
 
-// Decodes a whole message built by fix_text (which frames it correctly).
-decode_result run(const std::string& body, message_view<>& v, std::string& keep) {
-    keep = fixgw::test::message(body);
-    return decode(keep.data(), keep.size(), v);
+using decode_fn = decode_result (*)(const char*, std::size_t, message_view<>&);
+template <class Scan>
+decode_result with(const char* p, std::size_t n, message_view<>& v) {
+    return decoder<256, Scan>::decode(p, n, v);
+}
+decode_fn current = nullptr;  // the decoder under test in this pass
+
+// Decodes a whole message built by fix_text (which frames it correctly), from
+// a buffer with 64 bytes of padding past its end (the receive buffer's contract).
+decode_result run(const std::string& body, message_view<>& v, std::vector<char>& keep) {
+    const std::string m = fixgw::test::message(body);
+    keep.assign(m.size() + 64, '\x7f');
+    std::copy(m.begin(), m.end(), keep.begin());
+    return current(keep.data(), m.size(), v);
 }
 
 void rejects(const std::string& body, int reason, std::uint32_t tag, const std::string& name) {
     message_view<> v;
-    std::string keep;
+    std::vector<char> keep;
     const auto r = run(body, v, keep);
     check(!r.ok && r.reject_reason == reason && r.ref_tag == tag,
           "S3 " + name + ": reason " + std::to_string(r.reject_reason) + ", tag " + std::to_string(r.ref_tag) +
@@ -37,12 +50,10 @@ constexpr bool header_bits_distinct() {
 }
 static_assert(header_bits_distinct(), "every non-group header tag has its own bit");
 
-}  // namespace
-
-int main() {
+void all() {
     {
         message_view<> v;
-        std::string keep;
+        std::vector<char> keep;
         const auto r = run(fixgw::test::new_order_body(5), v, keep);
         check(r.ok && v.size() == 17, "a NewOrderSingle decodes: 17 fields (" + std::to_string(v.size()) + ")");
         check(v.msg_type() == "D" && v.get(11) == "ORD-000001" && v.get(44) == "72.53" && v.get(34) == "5",
@@ -53,13 +64,13 @@ int main() {
     }
     {
         message_view<> v;
-        std::string keep;
+        std::vector<char> keep;
         const auto r = run("35=A|49=C|56=V|34=1|52=20261021-09:30:00|98=0|108=30|95=5|96=ab|cd|", v, keep);
         check(r.ok && v.get(96) == std::string_view("ab\x01" "cd", 5), "S4 RawData containing SOH is read whole, by its length");
     }
     {
         message_view<> v;
-        std::string keep;
+        std::vector<char> keep;
         const auto r = run("35=0|49=C|56=V|627=2|628=H1|629=20261021-09:30:00|628=H2|34=1|52=20261021-09:30:00|", v, keep);
         check(r.ok, "the NoHops group's fields may repeat in the header");
     }
@@ -81,6 +92,20 @@ int main() {
         const std::string m = fixgw::test::message("35=0|49=C|56=V|");
         const auto r = decoder<4>::decode(m.data(), m.size(), v);
         check(!r.ok && r.reject_reason == reject_reason::other, "more fields than the decoder holds: refused, not overrun");
+    }
+}
+
+}  // namespace
+
+int main() {
+    const struct {
+        const char* name;
+        decode_fn fn;
+    } impls[] = {{"scalar", with<scan::scalar>}, {"SIMD", with<scan::simd<false>>}, {"SIMD, padded", with<scan::simd<true>>}};
+    for (const auto& d : impls) {
+        std::printf("== decoder: %s\n", d.name);
+        current = d.fn;
+        all();
     }
     return fixgw::test::result();
 }

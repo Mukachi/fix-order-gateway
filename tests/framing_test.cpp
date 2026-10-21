@@ -1,4 +1,5 @@
-// Tests for include/fixgw/framing.hpp. Spec: docs/design/002-codec.md (S1, S2)
+// Tests for include/fixgw/framing.hpp. Spec: docs/design/002-codec.md (S1, S2);
+// every check runs against each framer: scalar and SIMD (note 009, S1).
 #include "fix_text.hpp"
 
 #include <fixgw/framing.hpp>
@@ -16,6 +17,9 @@ using fixgw::test::message;
 
 constexpr std::size_t max_frame = 4096;
 
+using frame_fn = frame_result (*)(const char*, std::size_t, std::size_t);
+frame_fn frame_under_test = nullptr;
+
 // A reader: bytes arrive in chunks; after each, frame whatever is complete.
 // Returns the frames in order, and the garbled reasons seen.
 struct reader {
@@ -24,7 +28,7 @@ struct reader {
     void feed(const std::string& chunk) {
         buffer += chunk;
         for (;;) {
-            const auto r = frame(buffer.data(), buffer.size(), max_frame);
+            const auto r = frame_under_test(buffer.data(), buffer.size(), max_frame);
             if (r.status == frame_status::need_more) return;
             if (r.status == frame_status::complete) frames.push_back(buffer.substr(0, r.length));
             else garbled.emplace_back(r.why);
@@ -33,9 +37,7 @@ struct reader {
     }
 };
 
-}  // namespace
-
-int main() {
+void all() {
     const std::string a = message(fixgw::test::new_order_body(1));
     const std::string b = message("35=0|49=VENUE|56=CLIENT|34=7|52=20261021-09:30:01.000|");
     const std::string c = message(fixgw::test::new_order_body(2));
@@ -43,9 +45,9 @@ int main() {
     const std::vector<std::string> expect{a, b, c};
 
     {
-        const auto r = frame(a.data(), a.size(), max_frame);
+        const auto r = frame_under_test(a.data(), a.size(), max_frame);
         check(r.status == frame_status::complete && r.length == a.size(), "a whole message is framed, its length exact");
-        check(frame(a.data(), 4, max_frame).status == frame_status::need_more, "a partial prefix needs more");
+        check(frame_under_test(a.data(), 4, max_frame).status == frame_status::need_more, "a partial prefix needs more");
     }
 
     // S1: every split point, byte by byte, and random coalesced reads.
@@ -108,7 +110,27 @@ int main() {
         const std::string m = fixgw::test::soh("8=FIX.4.4|9=5|35=0|");
         unsigned sum = 0;
         for (unsigned char ch : m) sum += ch;
-        check(checksum(m.data(), m.size()) == sum % 256, "CheckSum is the byte sum modulo 256");
+        check(checksum_scalar(m.data(), m.size()) == sum % 256 && checksum_simd(m.data(), m.size()) == sum % 256,
+              "CheckSum is the byte sum modulo 256, scalar and SIMD");
     }
+}
+
+}  // namespace
+
+int main() {
+    std::printf("== framer: scalar\n");
+    frame_under_test = frame_scalar;
+    all();
+    std::printf("== framer: SIMD\n");
+    frame_under_test = frame_simd;
+    all();
+    // CheckSum at every length up to 300 and every alignment: SIMD equals scalar.
+    std::string bytes(400, '\0');
+    for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<char>(i * 131 + 7);
+    bool same = true;
+    for (std::size_t off = 0; off < 32; ++off)
+        for (std::size_t n = 0; n + off <= 300; ++n)
+            same = same && checksum_simd(bytes.data() + off, n) == checksum_scalar(bytes.data() + off, n);
+    check(same, "S1 SIMD CheckSum equals scalar at every length 0-300 and every alignment");
     return fixgw::test::result();
 }

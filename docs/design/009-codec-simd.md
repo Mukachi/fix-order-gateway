@@ -80,8 +80,8 @@ checked again in these runs.
 
 ## Tasks
 
-- [ ] `x86-64-v3` in the build (scalar elsewhere); padded receive-buffer contract
-- [ ] Step 1: SIMD framer and SOH scan; equivalence tests; S3
+- [x] `x86-64-v3` in the build (scalar elsewhere); padded receive-buffer contract
+- [x] Step 1: SIMD framer and SOH scan; equivalence tests; S3
 - [ ] Step 2: two-stage index decoder, single message and burst; equivalence tests
 - [ ] Differential fuzz target; S2
 - [ ] Benchmark cases; three bench-mode runs; review
@@ -92,3 +92,4 @@ checked again in these runs.
 |---|---|---|
 | 2026-10-21 | Draft | Written for review |
 | 2026-10-21 | Agreed | Approved by Shep: two measured steps (SIMD scanning; two-stage indexing, single message and burst); `x86-64-v3` at compile time, scalar elsewhere; 64-byte padded receive buffer, scalar tail when unpadded; correctness by equivalence, differential fuzzing; encoding and AVX-512 out of scope; three runs published beside note 002's |
+| 2026-10-21 | Built (partial) | Step 1. `checksum_simd`: `vpsadbw` against zero over whole 32-byte blocks, the rest a byte at a time, so it never reads past its length and needs no padding. `frame_with<Simd>`: the framer with either CheckSum; `frame_scalar`, `frame_simd`, and `frame` (SIMD where the build has it). `scan::simd<Padded>`: the next SOH 32 bytes at a time (`vpcmpeqb`, `vpmovmskb`, `tzcnt`); padded, every load is whole and bits past the end are masked; unpadded, whole blocks then a byte at a time. The decoder takes the scan as a parameter, `scan::best` by default. GCC already auto-vectorises the plain CheckSum loop, so the comparison measured is plain code as the compiler builds it against hand-written SIMD. S6 check extended to every implementation (each behind its own `flatten` symbol, so the check sees the inlined path): no calls but the stack protector's abort. Tests: every framing and decoding check runs against scalar, SIMD and SIMD-padded; the SIMD CheckSum equals the scalar one at every length 0–300 and alignment 0–31; S3, at 64 consecutive message lengths, SIMD reads nothing past an exact-size allocation and the padded path nothing past its 32 bytes (ASan), SOH bytes past the end ignored; 100,000 mutated messages framed and decoded identically. Clean under ASan and UBSan; the aarch64 build compiles the scalar paths |
