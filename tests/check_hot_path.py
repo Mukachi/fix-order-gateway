@@ -19,6 +19,9 @@ SUBJECTS = {
     "fixgw_decode": STACK,
     "fixgw_decode_simd": STACK,
     "fixgw_decode_simd_padded": STACK,
+    "fixgw_index_build": set(),
+    "fixgw_index_build_padded": set(),
+    "fixgw_decode_indexed": STACK,
     "fixgw_encode_c": set(),
     "fixgw_encode_b": {"memcpy@plt", "__stack_chk_fail@plt"},
 }

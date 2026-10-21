@@ -37,17 +37,24 @@ int main() {
             const std::size_t n = m.size();
             std::vector<char> exact(m.begin(), m.end());        // exactly the message: ASan sees any over-read
             std::vector<char> padded(m.begin(), m.end());
-            padded.resize(n + 32, soh);                          // SOH past the end must not be seen
+            padded.resize(n + 64, soh);                          // SOH past the end must not be seen
             message_view<> a, b, c;
             const auto fs = frame_scalar(exact.data(), n, 4096), fv = frame_simd(exact.data(), n, 4096);
             const auto ra = decoder<256, scan::scalar>::decode(exact.data(), n, a);
             const auto rb = decoder<256, scan::simd<false>>::decode(exact.data(), n, b);
             const auto rc = decoder<256, scan::simd<true>>::decode(padded.data(), n, c);
+            static structural_index<64> ix;
+            message_view<> d, e;
+            const bool built = ix.build<false>(exact.data(), n);
+            const auto rd = decode_indexed(exact.data(), ix, 0, n, d);
+            const bool built_p = ix.build<true>(padded.data(), n);
+            const auto re = decode_indexed(padded.data(), ix, 0, n, e);
+            ok = ok && built && built_p && same(ra, a, rd, d) && same(ra, a, re, e);
             ok = ok && fs.status == frame_status::complete && fv.status == fs.status && fv.length == fs.length &&
                  ra.ok && same(ra, a, rb, b) && same(ra, a, rc, c);
         }
-        check(ok, "S3 64 consecutive message lengths: SIMD reads nothing past an exact allocation, padded "
-                  "nothing past its 32 bytes, SOH beyond the end ignored, results equal scalar");
+        check(ok, "S3 64 consecutive message lengths: SIMD and the index read nothing past an exact allocation, "
+                  "padded paths nothing past their padding, SOH beyond the end ignored, results equal scalar");
     }
 
     // S1, S2: 100,000 mutations of a NewOrderSingle: framing and decoding agree.
@@ -72,14 +79,42 @@ int main() {
             if (fs.status != fv.status || fs.length != fv.length) ++differ;
             // Decode whatever framing accepts, and also the raw bytes, which
             // reach the decoder's error paths more often.
-            message_view<> a, b;
+            message_view<> a, b, c;
             const auto ra = decoder<256, scan::scalar>::decode(exact.data(), m.size(), a);
             const auto rb = decoder<256, scan::simd<false>>::decode(exact.data(), m.size(), b);
-            if (!same(ra, a, rb, b)) ++differ;
+            static structural_index<64> ix;
+            ix.build<false>(exact.data(), m.size());
+            const auto rc = decode_indexed(exact.data(), ix, 0, m.size(), c);
+            if (!same(ra, a, rb, b) || !same(ra, a, rc, c)) ++differ;
             complete += fs.status == frame_status::complete;
         }
-        check(differ == 0, "S1 S2 100,000 mutated messages: scalar and SIMD frame and decode identically (" +
+        check(differ == 0, "S1 S2 100,000 mutated messages: scalar, SIMD and the index frame and decode identically (" +
                                std::to_string(complete) + " still framed whole, " + std::to_string(differ) + " differences)");
+    }
+    // Burst: one index over 1,000 coalesced messages of mixed kinds; each
+    // message framed and decoded from it, against the scalar decoder alone.
+    {
+        std::string stream;
+        for (int i = 0; i < 1000; ++i)
+            stream += fixgw::test::message(i % 3 == 0 ? fixgw::test::new_order_body(i)
+                                         : i % 3 == 1 ? "35=0|49=V|56=C|34=" + std::to_string(i) + "|52=20261021-09:30:01.000|"
+                                                      : "35=A|49=C|56=V|34=1|52=20261021-09:30:00.000|98=0|108=30|95=5|96=ab|cd|");
+        std::vector<char> buf(stream.begin(), stream.end());
+        static structural_index<4096> ix;
+        const bool built = ix.build<false>(buf.data(), buf.size());
+        std::size_t at = 0, n = 0, agree = 0;
+        while (at < buf.size()) {
+            const auto f = frame_simd(buf.data() + at, buf.size() - at, 4096);
+            if (f.status != frame_status::complete) break;
+            message_view<> a, b;
+            const auto ra = decoder<256, scan::scalar>::decode(buf.data() + at, f.length, a);
+            const auto rb = decode_indexed(buf.data(), ix, at, f.length, b);
+            agree += ra.ok && same(ra, a, rb, b) && b.bytes().data() == buf.data() + at;
+            at += f.length;
+            ++n;
+        }
+        check(built && n == 1000 && agree == 1000,
+              "burst: one index over 1,000 coalesced messages; every message decodes from it as the scalar decoder does");
     }
     return fixgw::test::result();
 }

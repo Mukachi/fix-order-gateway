@@ -28,6 +28,20 @@ extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_sim
     return fixgw::decoder<256, fixgw::scan::simd<true>>::decode(p, n, v);
 }
 
+// Two-stage (note 009): stage one over a buffer, and stage two for one message.
+extern "C" [[gnu::noinline, gnu::flatten]] bool fixgw_index_build(fixgw::structural_index<64>& ix, const char* p,
+                                                                  std::size_t n) {
+    return ix.build<false>(p, n);
+}
+extern "C" [[gnu::noinline, gnu::flatten]] bool fixgw_index_build_padded(fixgw::structural_index<64>& ix,
+                                                                         const char* p, std::size_t n) {
+    return ix.build<true>(p, n);
+}
+extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_indexed(
+    const char* base, const fixgw::structural_index<64>& ix, std::size_t off, std::size_t n, fixgw::message_view<>& v) {
+    return fixgw::decode_indexed(base, ix, off, n, v);
+}
+
 // Encoder B: a NewOrderSingle, field by field.
 extern "C" [[gnu::noinline]] std::size_t fixgw_encode_b(char* buf, std::size_t cap, std::uint64_t seq, std::uint64_t qty,
                                                         std::int64_t price) {
@@ -64,7 +78,10 @@ int main(int argc, char**) {
                     fixgw_frame_simd(buf, 0).status != fixgw::frame_status::complete &&
                     fixgw_decode(buf, 0, v).ok == false && fixgw_decode_simd(buf, 0, v).ok == false &&
                     fixgw_decode_simd_padded(buf, 0, v).ok == false;
+    static fixgw::structural_index<64> ix;
+    const bool built = fixgw_index_build(ix, buf, 0) && fixgw_index_build_padded(ix, buf, 0) &&
+                       fixgw_decode_indexed(buf, ix, 0, 0, v).ok == false;
     static fixgw::new_order_template t({"CLIENT", "VENUE", "ACC1", "VOD.L", '1', '2', '0', 2});
-    std::printf("%zu %zu %d\n", n, fixgw_encode_c(t, 1, 0, 1, 1, 1), ok);
+    std::printf("%zu %zu %d %d\n", n, fixgw_encode_c(t, 1, 0, 1, 1, 1), ok, built);
     return 0;
 }

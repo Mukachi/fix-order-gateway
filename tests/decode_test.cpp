@@ -1,6 +1,6 @@
 // Tests for include/fixgw/decode.hpp. Spec: docs/design/002-codec.md (S3, S4);
-// every check runs against each decoder: scalar, SIMD, SIMD on a padded buffer
-// (note 009, S2).
+// every check runs against each decoder: scalar, SIMD, SIMD on a padded buffer,
+// two-stage index unpadded and padded (note 009, S2).
 #include "fix_text.hpp"
 
 #include <fixgw/decode.hpp>
@@ -17,6 +17,13 @@ using decode_fn = decode_result (*)(const char*, std::size_t, message_view<>&);
 template <class Scan>
 decode_result with(const char* p, std::size_t n, message_view<>& v) {
     return decoder<256, Scan>::decode(p, n, v);
+}
+// Two-stage: index the message, then decode from the index.
+template <bool Padded>
+decode_result indexed(const char* p, std::size_t n, message_view<>& v) {
+    static structural_index<64> ix;
+    if (!ix.build<Padded>(p, n)) return {false, -1, 0, "message too large for the test index"};
+    return decode_indexed(p, ix, 0, n, v);
 }
 decode_fn current = nullptr;  // the decoder under test in this pass
 
@@ -101,7 +108,9 @@ int main() {
     const struct {
         const char* name;
         decode_fn fn;
-    } impls[] = {{"scalar", with<scan::scalar>}, {"SIMD", with<scan::simd<false>>}, {"SIMD, padded", with<scan::simd<true>>}};
+    } impls[] = {{"scalar", with<scan::scalar>},        {"SIMD", with<scan::simd<false>>},
+                 {"SIMD, padded", with<scan::simd<true>>}, {"two-stage index", indexed<false>},
+                 {"two-stage index, padded", indexed<true>}};
     for (const auto& d : impls) {
         std::printf("== decoder: %s\n", d.name);
         current = d.fn;
