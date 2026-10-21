@@ -9,6 +9,17 @@
 #include <immintrin.h>
 #endif
 
+// Keeps the compiler from auto-vectorising a loop over a few bytes: with AVX2,
+// GCC's vectorised short loops cost more than the plain ones (note 009,
+// Review). Hand-written SIMD is unaffected.
+#if defined(__clang__)
+#define FIXGW_NOVECTOR _Pragma("clang loop vectorize(disable)")
+#elif defined(__GNUC__) && __GNUC__ >= 14
+#define FIXGW_NOVECTOR _Pragma("GCC novector")
+#else
+#define FIXGW_NOVECTOR
+#endif
+
 namespace fixgw {
 
 inline constexpr char soh = '\x01';
@@ -36,7 +47,7 @@ inline constexpr bool simd_available = false;
 #endif
 
 // The sum of `n` bytes modulo 256: FIX's CheckSum, a byte at a time.
-inline unsigned checksum_scalar(const char* p, std::size_t n) noexcept {
+[[gnu::always_inline]] inline unsigned checksum_scalar(const char* p, std::size_t n) noexcept {
     unsigned sum = 0;
     for (std::size_t i = 0; i < n; ++i) sum += static_cast<unsigned char>(p[i]);
     return sum & 0xffU;
@@ -45,7 +56,7 @@ inline unsigned checksum_scalar(const char* p, std::size_t n) noexcept {
 // The same, 32 bytes per step (note 009): vpsadbw against zero sums each
 // 8-byte lane into a 64-bit total. Whole blocks only, the rest a byte at a
 // time, so it never reads past `n`.
-inline unsigned checksum_simd(const char* p, std::size_t n) noexcept {
+[[gnu::always_inline]] inline unsigned checksum_simd(const char* p, std::size_t n) noexcept {
 #if defined(__AVX2__)
     __m256i acc = _mm256_setzero_si256();
     const __m256i zero = _mm256_setzero_si256();
@@ -74,9 +85,11 @@ namespace detail {
 // position from which `begin_string` matches, or matches as far as the buffer
 // goes. Everything before it is discarded.
 inline std::size_t next_start(const char* p, std::size_t n) noexcept {
+    FIXGW_NOVECTOR
     for (std::size_t i = 1; i < n; ++i) {
         if (p[i] != '8') continue;
         std::size_t k = 0;
+        FIXGW_NOVECTOR
         while (k < begin_string.size() && i + k < n && p[i + k] == begin_string[k]) ++k;
         if (k == begin_string.size() || i + k == n) return i;
     }
@@ -96,7 +109,7 @@ inline frame_result garbled(const char* p, std::size_t n, const char* why) noexc
 // (the receive buffer's size): a frame longer than that is garbled.
 // `Simd` chooses the CheckSum; everything else is the same code.
 template <bool Simd>
-inline frame_result frame_with(const char* p, std::size_t n, std::size_t max_frame) noexcept {
+[[gnu::always_inline]] inline frame_result frame_with(const char* p, std::size_t n, std::size_t max_frame) noexcept {
     // BeginString and the start of BodyLength.
     const std::size_t prefix = begin_string.size();
     for (std::size_t i = 0; i < prefix; ++i) {
@@ -105,6 +118,7 @@ inline frame_result frame_with(const char* p, std::size_t n, std::size_t max_fra
     }
     // BodyLength: digits, then SOH.
     std::size_t body_length = 0, i = prefix;
+    FIXGW_NOVECTOR
     for (;; ++i) {
         if (i == n) return {frame_status::need_more, 0, nullptr};
         const char c = p[i];

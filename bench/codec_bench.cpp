@@ -34,11 +34,58 @@ namespace fx = fixgw;
 
 constexpr int cpu = 2;
 constexpr std::size_t inputs = 1024, samples = 1'000'000, warmup = 100'000;
-constexpr std::int64_t base_ms = 1'792'567'800'000;  // 2026-10-21 09:30:00 UTC
+constexpr std::int64_t base_ms = 1'792'567'800'000;  // 2026-10-21 07:30:00 UTC
 
 template <typename T>
 inline void keep(const T& v) {
     asm volatile("" : : "g"(&v) : "memory");
+}
+
+// Every measured operation is called through its own non-inlined entry point,
+// as a caller (the session) would call it. Inlined into the timing loop, the
+// same decoder's cost moved by 1.5x with unrelated code elsewhere in the file
+// (note 009, Review); through an entry point it is stable. One call's cost
+// (~1-2 ns) is included.
+using view_t = fx::message_view<>;
+[[gnu::noinline]] fx::frame_result op_frame_scalar(const char* p, std::size_t n) { return fx::frame_scalar(p, n, 4096); }
+[[gnu::noinline]] fx::frame_result op_frame_simd(const char* p, std::size_t n) { return fx::frame_simd(p, n, 4096); }
+[[gnu::noinline]] fx::decode_result op_decode_scalar(const char* p, std::size_t n, view_t& v) {
+    return fx::decoder<256, fx::scan::scalar>::decode(p, fx::frame_scalar(p, n, 4096).length, v);
+}
+[[gnu::noinline]] fx::decode_result op_decode_simd(const char* p, std::size_t n, view_t& v) {
+    return fx::decoder<256, fx::scan::simd<false>>::decode(p, fx::frame_simd(p, n, 4096).length, v);
+}
+[[gnu::noinline]] fx::decode_result op_decode_simd_padded(const char* p, std::size_t n, view_t& v) {
+    return fx::decoder<256, fx::scan::simd<true>>::decode(p, fx::frame_simd(p, n, 4096).length, v);
+}
+// Two-stage on one message: the index built per message, inside the call.
+[[gnu::noinline]] fx::decode_result op_decode_index(const char* p, std::size_t n, view_t& v) {
+    static fx::structural_index<64> ix;
+    const std::size_t len = fx::frame_simd(p, n, 4096).length;
+    ix.build<true>(p, len);
+    return fx::decode_indexed(p, ix, 0, len, v);
+}
+[[gnu::noinline]] bool op_decode_a(const char* p, std::size_t n, std::unordered_map<std::uint32_t, std::string>& m) {
+    return fx::bench::decode_a(p, fx::frame_scalar(p, n, 4096).length, m);
+}
+// Decoding alone, for the bursts (framing is the same for every path there).
+[[gnu::noinline]] fx::decode_result op_only_scalar(const char* p, std::size_t n, view_t& v) {
+    return fx::decoder<256, fx::scan::scalar>::decode(p, n, v);
+}
+[[gnu::noinline]] fx::decode_result op_only_simd(const char* p, std::size_t n, view_t& v) {
+    return fx::decoder<256, fx::scan::simd<false>>::decode(p, n, v);
+}
+[[gnu::noinline]] fx::decode_result op_only_simd_padded(const char* p, std::size_t n, view_t& v) {
+    return fx::decoder<256, fx::scan::simd<true>>::decode(p, n, v);
+}
+template <std::size_t W>
+[[gnu::noinline]] fx::decode_result op_only_indexed(const char* base, const fx::structural_index<W>& ix,
+                                                    std::size_t off, std::size_t n, view_t& v) {
+    return fx::decode_indexed(base, ix, off, n, v);
+}
+template <std::size_t W>
+[[gnu::noinline]] bool op_index(fx::structural_index<W>& ix, const char* p, std::size_t n) {
+    return ix.template build<true>(p, n);
 }
 
 // Per-call cost of op(i), i cycling over the inputs.
@@ -74,7 +121,7 @@ std::vector<order_values> make_orders() {
 
 // A NewOrderSingle through encoder B, every field formatted as an order path
 // would: the timestamp and ClOrdID from numbers.
-std::string_view encode_b(char* buf, std::size_t cap, const order_values& o) {
+[[gnu::noinline]] std::string_view encode_b(char* buf, std::size_t cap, const order_values& o) {
     char ts[fx::utc_timestamp_length];
     fx::format_utc_timestamp(o.ms, ts);
     const std::string_view t(ts, sizeof(ts));
@@ -96,7 +143,7 @@ std::string_view encode_b(char* buf, std::size_t cap, const order_values& o) {
     return e.finish();
 }
 
-std::string encode_a(const order_values& o) {
+[[gnu::noinline]] std::string encode_a(const order_values& o) {
     char ts[fx::utc_timestamp_length];
     fx::format_utc_timestamp(o.ms, ts);
     const std::string t(ts, sizeof(ts));
@@ -161,6 +208,10 @@ std::string heartbeat(const order_values& o) {
     return std::string(e.finish());
 }
 
+[[gnu::noinline]] std::string_view op_encode_c(fx::new_order_template& t, const order_values& o) {
+    return t.fill(o.seq, o.ms, o.clordid, o.qty, o.price);
+}
+
 struct result {
     std::string name, representation, operation, message;
     std::size_t bytes;
@@ -211,48 +262,23 @@ int main(int argc, char** argv) {
     fx::message_view<> view;
     std::unordered_map<std::uint32_t, std::string> map;
     map.reserve(64);
-    static fx::structural_index<64> small_ix;
 
     out.push_back({"none", "-", "empty window: start(); stop()", "-", 0, time_op([](std::size_t) {})});
     // Frame and decode, per path.
-    const auto scalar = [&](const slots& m) {
-        return [&](std::size_t j) {
-            const auto f = fx::frame_scalar(m.at(j), m.length[j], 4096);
-            const auto d = fx::decoder<256, fx::scan::scalar>::decode(m.at(j), f.length, view);
-            keep(d);
-            keep(view);
+    const auto path = [&](auto op) {
+        return [&, op](const slots& m) {
+            return [&, op](std::size_t j) {
+                const auto d = op(m.at(j), m.length[j], view);
+                keep(d);
+                keep(view);
+            };
         };
     };
-    const auto simd = [&](const slots& m) {
-        return [&](std::size_t j) {
-            const auto f = fx::frame_simd(m.at(j), m.length[j], 4096);
-            const auto d = fx::decoder<256, fx::scan::simd<false>>::decode(m.at(j), f.length, view);
-            keep(d);
-            keep(view);
-        };
-    };
-    const auto simd_padded = [&](const slots& m) {
-        return [&](std::size_t j) {
-            const auto f = fx::frame_simd(m.at(j), m.length[j], 4096);
-            const auto d = fx::decoder<256, fx::scan::simd<true>>::decode(m.at(j), f.length, view);
-            keep(d);
-            keep(view);
-        };
-    };
-    // Two-stage on one message: the index is built per message, inside the window.
-    const auto indexed = [&](const slots& m) {
-        return [&](std::size_t j) {
-            const auto f = fx::frame_simd(m.at(j), m.length[j], 4096);
-            small_ix.build<true>(m.at(j), f.length);
-            const auto d = fx::decode_indexed(m.at(j), small_ix, 0, f.length, view);
-            keep(d);
-            keep(view);
-        };
-    };
+    const auto scalar = path(op_decode_scalar), simd = path(op_decode_simd), simd_padded = path(op_decode_simd_padded),
+               indexed = path(op_decode_index);
     const auto rep_a = [&](const slots& m) {
         return [&](std::size_t j) {
-            const auto f = fx::frame_scalar(m.at(j), m.length[j], 4096);
-            const bool ok = fx::bench::decode_a(m.at(j), f.length, map);
+            const bool ok = op_decode_a(m.at(j), m.length[j], map);
             keep(ok);
             keep(map);
         };
@@ -266,11 +292,11 @@ int main(int argc, char** argv) {
         const std::size_t bytes = msg.m->length[0];
         const std::string t = msg.tag;
         out.push_back({"frame_scalar_" + t, "scalar", "frame", msg.name, bytes, time_op([&](std::size_t j) {
-                           const auto f = fx::frame_scalar(msg.m->at(j), msg.m->length[j], 4096);
+                           const auto f = op_frame_scalar(msg.m->at(j), msg.m->length[j]);
                            keep(f);
                        })});
         out.push_back({"frame_simd_" + t, "SIMD", "frame", msg.name, bytes, time_op([&](std::size_t j) {
-                           const auto f = fx::frame_simd(msg.m->at(j), msg.m->length[j], 4096);
+                           const auto f = op_frame_simd(msg.m->at(j), msg.m->length[j]);
                            keep(f);
                        })});
         out.push_back({"decode_a_" + t, "A", "frame and decode", msg.name, bytes, time_op(rep_a(*msg.m))});
@@ -292,8 +318,7 @@ int main(int argc, char** argv) {
     fx::new_order_template tmpl({"CLIENT", "VENUE", "ACC1", "VOD.L", '1', '2', '0', 2});
     const std::size_t c_bytes = tmpl.fill(1, base_ms, 1, 1, 1).size();
     out.push_back({"encode_c_nos", "C", "encode", "NewOrderSingle", c_bytes, time_op([&](std::size_t j) {
-                       const auto& o = orders[j];
-                       const auto s = tmpl.fill(o.seq, o.ms, o.clordid, o.qty, o.price);
+                       const auto s = op_encode_c(tmpl, orders[j]);
                        keep(s);
                    })});
 
@@ -335,9 +360,9 @@ int main(int argc, char** argv) {
             std::size_t at = 0, n = 0;
             for (const std::size_t end : batch_end) {
                 const std::size_t base = at;
-                if (index_first) batch_ix->build<true>(stream.data() + base, end - base);
+                if (index_first) op_index(*batch_ix, stream.data() + base, end - base);
                 while (at < end) {
-                    const auto f = fx::frame_simd(stream.data() + at, end - at, 4096);
+                    const auto f = op_frame_simd(stream.data() + at, end - at);
                     const auto d = decode_one(base, at, f.length);
                     keep(d);
                     at += f.length;
@@ -351,14 +376,12 @@ int main(int argc, char** argv) {
         std::sort(t.per_second.begin(), t.per_second.end());
         through.push_back(std::move(t));
     };
-    burst("scalar", [&](std::size_t, std::size_t at, std::size_t len) {
-        return fx::decoder<256, fx::scan::scalar>::decode(stream.data() + at, len, view); }, false);
-    burst("SIMD", [&](std::size_t, std::size_t at, std::size_t len) {
-        return fx::decoder<256, fx::scan::simd<false>>::decode(stream.data() + at, len, view); }, false);
+    burst("scalar", [&](std::size_t, std::size_t at, std::size_t len) { return op_only_scalar(stream.data() + at, len, view); }, false);
+    burst("SIMD", [&](std::size_t, std::size_t at, std::size_t len) { return op_only_simd(stream.data() + at, len, view); }, false);
     burst("SIMD, padded", [&](std::size_t, std::size_t at, std::size_t len) {
-        return fx::decoder<256, fx::scan::simd<true>>::decode(stream.data() + at, len, view); }, false);
+        return op_only_simd_padded(stream.data() + at, len, view); }, false);
     burst("two-stage", [&](std::size_t base, std::size_t at, std::size_t len) {
-        return fx::decode_indexed(stream.data() + base, *batch_ix, at - base, len, view); }, true);
+        return op_only_indexed(stream.data() + base, *batch_ix, at - base, len, view); }, true);
 
     write_noise_block(run.w, noise, clk.cal.ticks_per_ns);
     write_clock_block(run.w, clk);

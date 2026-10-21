@@ -121,7 +121,8 @@ namespace scan {
 
 // A byte at a time: note 002's decoder.
 struct scalar {
-    static std::size_t find_soh(const char* p, std::size_t i, std::size_t n) noexcept {
+    [[gnu::always_inline]] static std::size_t find_soh(const char* p, std::size_t i, std::size_t n) noexcept {
+        FIXGW_NOVECTOR
         while (i < n && p[i] != soh) ++i;
         return i;
     }
@@ -133,7 +134,7 @@ struct scalar {
 // masked off. Otherwise whole blocks only, and the last few bytes one at a time.
 template <bool Padded>
 struct simd {
-    static std::size_t find_soh(const char* p, std::size_t i, std::size_t n) noexcept {
+    [[gnu::always_inline]] static std::size_t find_soh(const char* p, std::size_t i, std::size_t n) noexcept {
 #if defined(__AVX2__)
         const __m256i s = _mm256_set1_epi8(soh);
         for (; Padded ? i < n : i + 32 <= n; i += 32) {
@@ -172,25 +173,10 @@ struct field_rules {
         return {false, reason, tag, why};
     }
 
-    // The tag between `p + from` and the '=' at `p + eq`: a positive integer,
-    // no leading zero. `eq` is where the first non-digit is, if not '='.
-    static bool parse_tag(const char* p, std::size_t from, std::size_t eq, std::uint32_t& tag,
-                          decode_result& err) noexcept {
-        tag = 0;
-        for (std::size_t k = from; k < eq; ++k) {
-            if (p[k] < '0' || p[k] > '9') break;
-            if (tag > 99'999'999) {
-                err = fail(reject_reason::invalid_tag_number, 0, "tag too large");
-                return false;
-            }
-            tag = tag * 10 + static_cast<std::uint32_t>(p[k] - '0');
-        }
-        return true;
-    }
-
     // One field whose value is p[value_start, value_start + value_length).
-    decode_result add(const char* p, std::uint32_t tag, std::size_t value_start, std::size_t value_length,
-                      message_view<MaxFields>& out, std::size_t& count, field* fields) noexcept {
+    // `count` is the caller's local, so it stays in a register.
+    [[gnu::always_inline]] decode_result add(const char* p, std::uint32_t tag, std::size_t value_start, std::size_t value_length,
+                      std::size_t& count, field* fields) noexcept {
         if (value_length == 0) return fail(reject_reason::tag_without_value, tag, "tag without a value");
         if (is_header_tag(tag)) {
             if (part != header) return fail(reject_reason::tag_out_of_order, tag, "header tag after the body");
@@ -208,6 +194,7 @@ struct field_rules {
         }
         if (const std::uint32_t d = data_tag_for(tag)) {
             std::size_t len = 0;
+            FIXGW_NOVECTOR
             for (std::size_t k = value_start; k < value_start + value_length; ++k) {
                 if (p[k] < '0' || p[k] > '9' || len > 99'999'999)
                     return fail(reject_reason::incorrect_data_format, tag, "data length is not a number");
@@ -216,14 +203,13 @@ struct field_rules {
             data_tag = d;
             data_length = len;
         }
-        (void)out;
         if (count == MaxFields) return fail(reject_reason::other, tag, "more fields than the decoder holds");
         fields[count++] = {tag, static_cast<std::uint32_t>(value_start), static_cast<std::uint32_t>(value_length)};
         return {true, 0, 0, nullptr};
     }
 
     // After the last field.
-    decode_result finish(std::size_t count, const field* fields) const noexcept {
+    [[gnu::always_inline]] decode_result finish(std::size_t count, const field* fields) const noexcept {
         if (data_tag != 0) return fail(reject_reason::incorrect_data_format, data_tag, "data length with no data field");
         // Framing found "10=" where BodyLength put it, but a data length can
         // still reach over it; the trailer must be the last field decoded.
@@ -240,40 +226,50 @@ struct decoder {
     // Decodes a frame that `frame()` reported complete. One pass, no copies,
     // no allocation: each field becomes (tag, offset, length). '=' is found
     // by reading the tag's digits; SOH by `Scan`.
-    static decode_result decode(const char* p, std::size_t n, message_view<MaxFields>& out) noexcept {
+    [[gnu::always_inline]] static decode_result decode(const char* p, std::size_t n, message_view<MaxFields>& out) noexcept {
         out.base_ = p;
         out.length_ = n;
         out.count_ = 0;
         detail::field_rules<MaxFields> rules;
+        std::size_t count = 0;
+        const auto done = [&](const decode_result& r) noexcept {
+            out.count_ = count;
+            return r;
+        };
         std::size_t i = 0;
         while (i < n) {
+            // Tag: a positive integer without a leading zero, read and
+            // converted in one pass.
+            std::uint32_t tag = 0;
             const std::size_t tag_start = i;
-            while (i < n && p[i] >= '0' && p[i] <= '9') ++i;
-            std::uint32_t tag;
-            decode_result err{};
-            if (!rules.parse_tag(p, tag_start, i, tag, err)) return err;
+            FIXGW_NOVECTOR
+            while (i < n && p[i] >= '0' && p[i] <= '9') {
+                if (tag > 99'999'999) return done(rules.fail(reject_reason::invalid_tag_number, 0, "tag too large"));
+                tag = tag * 10 + static_cast<std::uint32_t>(p[i] - '0');
+                ++i;
+            }
             if (i == tag_start || i == n || p[i] != '=' || p[tag_start] == '0')
-                return rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by =");
+                return done(rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by ="));
             ++i;
             std::size_t value_start = i, value_length;
             if (rules.data_tag != 0) {
                 if (tag != rules.data_tag)
-                    return rules.fail(reject_reason::incorrect_data_format, tag, "a data field does not follow its length");
+                    return done(rules.fail(reject_reason::incorrect_data_format, tag, "a data field does not follow its length"));
                 if (n - i < rules.data_length + 1 || p[i + rules.data_length] != soh)
-                    return rules.fail(reject_reason::incorrect_data_format, tag, "data field shorter than its length");
+                    return done(rules.fail(reject_reason::incorrect_data_format, tag, "data field shorter than its length"));
                 value_length = rules.data_length;
                 i += rules.data_length;
                 rules.data_tag = 0;
             } else {
                 i = Scan::find_soh(p, i, n);
-                if (i == n) return rules.fail(reject_reason::other, tag, "field not ended by SOH");
+                if (i == n) return done(rules.fail(reject_reason::other, tag, "field not ended by SOH"));
                 value_length = i - value_start;
             }
             ++i;  // past SOH
-            const auto r = rules.add(p, tag, value_start, value_length, out, out.count_, out.fields_);
-            if (!r.ok) return r;
+            const auto r = rules.add(p, tag, value_start, value_length, count, out.fields_);
+            if (!r.ok) return done(r);
         }
-        return rules.finish(out.count_, out.fields_);
+        return done(rules.finish(count, out.fields_));
     }
 };
 
@@ -290,7 +286,7 @@ struct structural_index {
     // `Padded`: at least 64 readable bytes past p + n. Otherwise the last
     // partial block is read a byte at a time. False if n exceeds the capacity.
     template <bool Padded = false>
-    bool build(const char* p, std::size_t len) noexcept {
+    [[gnu::always_inline]] bool build(const char* p, std::size_t len) noexcept {
         if (len > Words * 64) return false;
         n = len;
         std::size_t i = 0, w = 0;
@@ -330,7 +326,7 @@ struct structural_index {
     }
 
     // The first set bit at or after `pos` and before `end`, or `end`.
-    static std::size_t next(const std::uint64_t* bits, std::size_t pos, std::size_t end) noexcept {
+    [[gnu::always_inline]] static std::size_t next(const std::uint64_t* bits, std::size_t pos, std::size_t end) noexcept {
         std::size_t w = pos >> 6;
         std::uint64_t m = bits[w] & (~std::uint64_t{0} << (pos & 63));
         while (m == 0) {
@@ -346,13 +342,18 @@ struct structural_index {
 // Each field's '=' and SOH come from the bitmaps; the tag's digits are still
 // read, to validate and convert them. Field offsets are relative to the message.
 template <std::size_t MaxFields = 256, std::size_t Words>
-decode_result decode_indexed(const char* base, const structural_index<Words>& ix, std::size_t off, std::size_t len,
+[[gnu::always_inline]] inline decode_result decode_indexed(const char* base, const structural_index<Words>& ix, std::size_t off, std::size_t len,
                              message_view<MaxFields>& out) noexcept {
     const char* p = base + off;
     out.base_ = p;
     out.length_ = len;
     out.count_ = 0;
     detail::field_rules<MaxFields> rules;
+    std::size_t count = 0;
+    const auto done = [&](const decode_result& r) noexcept {
+        out.count_ = count;
+        return r;
+    };
     const std::size_t end = off + len;
     std::size_t i = off;  // absolute, in the index
     while (i < end) {
@@ -360,32 +361,35 @@ decode_result decode_indexed(const char* base, const structural_index<Words>& ix
         // The tag runs to the first non-digit; if that is not the '=', or the
         // tag is empty or starts with 0, it is invalid, as the scalar decoder says.
         std::size_t d = i;
-        while (d < eq && base[d] >= '0' && base[d] <= '9') ++d;
-        std::uint32_t tag;
-        decode_result err{};
-        if (!rules.parse_tag(base, i, d, tag, err)) return err;
+        std::uint32_t tag = 0;
+        FIXGW_NOVECTOR
+        while (d < eq && base[d] >= '0' && base[d] <= '9') {
+            if (tag > 99'999'999) return done(rules.fail(reject_reason::invalid_tag_number, 0, "tag too large"));
+            tag = tag * 10 + static_cast<std::uint32_t>(base[d] - '0');
+            ++d;
+        }
         if (d == i || d != eq || eq == end || base[i] == '0')
-            return rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by =");
+            return done(rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by ="));
         const std::size_t value_start = eq + 1;
         std::size_t value_length;
         if (rules.data_tag != 0) {
             if (tag != rules.data_tag)
-                return rules.fail(reject_reason::incorrect_data_format, tag, "a data field does not follow its length");
+                return done(rules.fail(reject_reason::incorrect_data_format, tag, "a data field does not follow its length"));
             if (end - value_start < rules.data_length + 1 || base[value_start + rules.data_length] != soh)
-                return rules.fail(reject_reason::incorrect_data_format, tag, "data field shorter than its length");
+                return done(rules.fail(reject_reason::incorrect_data_format, tag, "data field shorter than its length"));
             value_length = rules.data_length;
             i = value_start + rules.data_length;
             rules.data_tag = 0;
         } else {
             i = structural_index<Words>::next(ix.sep, value_start, end);
-            if (i == end) return rules.fail(reject_reason::other, tag, "field not ended by SOH");
+            if (i == end) return done(rules.fail(reject_reason::other, tag, "field not ended by SOH"));
             value_length = i - value_start;
         }
         ++i;
-        const auto r = rules.add(p, tag, value_start - off, value_length, out, out.count_, out.fields_);
-        if (!r.ok) return r;
+        const auto r = rules.add(p, tag, value_start - off, value_length, count, out.fields_);
+        if (!r.ok) return done(r);
     }
-    return rules.finish(out.count_, out.fields_);
+    return done(rules.finish(count, out.fields_));
 }
 
 // Decodes with the default capacity.

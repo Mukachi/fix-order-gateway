@@ -6,38 +6,39 @@
 
 #include <cstdio>
 
-// Each implementation behind its own symbol; `flatten` inlines what each
-// calls, so the check sees the whole path (note 009).
-extern "C" [[gnu::noinline, gnu::flatten]] fixgw::frame_result fixgw_frame(const char* p, std::size_t n) {
+// Each implementation behind its own symbol, compiled as any caller would
+// compile it (no `flatten`: the check must see the real inlining decisions;
+// note 009, Review).
+extern "C" [[gnu::noinline]] fixgw::frame_result fixgw_frame(const char* p, std::size_t n) {
     return fixgw::frame_scalar(p, n, 4096);
 }
-extern "C" [[gnu::noinline, gnu::flatten]] fixgw::frame_result fixgw_frame_simd(const char* p, std::size_t n) {
+extern "C" [[gnu::noinline]] fixgw::frame_result fixgw_frame_simd(const char* p, std::size_t n) {
     return fixgw::frame_simd(p, n, 4096);
 }
 
-extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode(const char* p, std::size_t n,
+extern "C" [[gnu::noinline]] fixgw::decode_result fixgw_decode(const char* p, std::size_t n,
                                                                             fixgw::message_view<>& v) {
     return fixgw::decoder<256, fixgw::scan::scalar>::decode(p, n, v);
 }
-extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_simd(const char* p, std::size_t n,
+extern "C" [[gnu::noinline]] fixgw::decode_result fixgw_decode_simd(const char* p, std::size_t n,
                                                                                  fixgw::message_view<>& v) {
     return fixgw::decoder<256, fixgw::scan::simd<false>>::decode(p, n, v);
 }
-extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_simd_padded(const char* p, std::size_t n,
+extern "C" [[gnu::noinline]] fixgw::decode_result fixgw_decode_simd_padded(const char* p, std::size_t n,
                                                                                         fixgw::message_view<>& v) {
     return fixgw::decoder<256, fixgw::scan::simd<true>>::decode(p, n, v);
 }
 
 // Two-stage (note 009): stage one over a buffer, and stage two for one message.
-extern "C" [[gnu::noinline, gnu::flatten]] bool fixgw_index_build(fixgw::structural_index<64>& ix, const char* p,
+extern "C" [[gnu::noinline]] bool fixgw_index_build(fixgw::structural_index<64>& ix, const char* p,
                                                                   std::size_t n) {
     return ix.build<false>(p, n);
 }
-extern "C" [[gnu::noinline, gnu::flatten]] bool fixgw_index_build_padded(fixgw::structural_index<64>& ix,
+extern "C" [[gnu::noinline]] bool fixgw_index_build_padded(fixgw::structural_index<64>& ix,
                                                                          const char* p, std::size_t n) {
     return ix.build<true>(p, n);
 }
-extern "C" [[gnu::noinline, gnu::flatten]] fixgw::decode_result fixgw_decode_indexed(
+extern "C" [[gnu::noinline]] fixgw::decode_result fixgw_decode_indexed(
     const char* base, const fixgw::structural_index<64>& ix, std::size_t off, std::size_t n, fixgw::message_view<>& v) {
     return fixgw::decode_indexed(base, ix, off, n, v);
 }
