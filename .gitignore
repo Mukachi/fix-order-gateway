@@ -1,0 +1,9 @@
+build/
+build-ci-*/
+.cache/
+__pycache__/
+*.o
+*.a
+*.so
+compile_commands.json
+perf.data*
