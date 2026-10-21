@@ -21,6 +21,7 @@
 #include <lfipc/bench/run_file.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
 #include <cstdio>
 #include <random>
@@ -179,52 +180,110 @@ std::vector<order_values> make_orders() {
     return m.serialise();
 }
 
-// An ExecutionReport (fill) as a venue would send it.
-std::string execution_report(const order_values& o) {
-    char ts[fx::utc_timestamp_length];
-    fx::format_utc_timestamp(o.ms, ts);
-    const std::string_view t(ts, sizeof(ts));
+[[gnu::noinline]] std::string_view op_encode_c(fx::new_order_template& t, const order_values& o) {
+    return t.fill(o.seq, o.ms, o.clordid, o.qty, o.price);
+}
+
+// Decoding inputs with the variety of real order flow (note 009, Review):
+// uniform messages (one symbol, fixed-width IDs and prices) made every branch
+// outcome repeat, so a predictor in a clean state predicted nearly all of
+// them, and each case ran fast or slow depending on the predictor's history.
+// Seeded, so every run decodes the same messages.
+struct variety {
+    std::mt19937_64 rng;
+    explicit variety(std::uint64_t seed) : rng(seed) {}
+    std::size_t between(std::size_t lo, std::size_t hi) { return lo + rng() % (hi - lo + 1); }
+    bool chance(unsigned percent) { return rng() % 100 < percent; }
+    std::string text(std::size_t lo, std::size_t hi, const char* alphabet) {
+        const std::size_t n = between(lo, hi), k = std::strlen(alphabet);
+        std::string out(n, ' ');
+        for (auto& c : out) c = alphabet[rng() % k];
+        return out;
+    }
+    std::string symbol() { return text(1, 4, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") + (chance(50) ? ".L" : ""); }  // 1-6
+    std::string id(std::size_t lo, std::size_t hi) { return text(lo, hi, "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ-"); }
+    std::uint64_t digits(std::size_t lo, std::size_t hi) {  // a number of lo..hi digits
+        const std::size_t n = between(lo, hi);
+        std::uint64_t lo_v = 1;
+        for (std::size_t i = 1; i < n; ++i) lo_v *= 10;
+        return lo_v + rng() % (lo_v * 9);
+    }
+    void price(fx::encoder& e, std::uint32_t tag) {  // 1-5 integer digits, 0-4 decimals
+        const int dec = static_cast<int>(between(0, 4));
+        std::uint64_t scale = 1;
+        for (int i = 0; i < dec; ++i) scale *= 10;
+        e.add_decimal(tag, static_cast<std::int64_t>(digits(1, 5) * scale + rng() % scale), dec);
+    }
+    void timestamp(fx::encoder& e, std::uint32_t tag, std::int64_t ms) {
+        char ts[fx::utc_timestamp_length];
+        fx::format_utc_timestamp(ms, ts);
+        e.add(tag, std::string_view(ts, sizeof(ts)));
+    }
+};
+
+std::string varied_new_order(variety& v, std::uint64_t seq, std::int64_t ms) {
+    char buf[512];
+    fx::encoder e(buf, sizeof(buf));
+    e.begin("D");
+    e.add(49, std::string_view("CLIENT"));
+    e.add(56, std::string_view("VENUE"));
+    e.add(34, seq);
+    v.timestamp(e, 52, ms);
+    e.add(11, v.id(6, 20));                       // ClOrdID 6-20
+    if (v.chance(80)) e.add(1, v.id(3, 12));      // Account 80% of orders
+    e.add(55, v.symbol());
+    e.add(54, v.chance(50) ? '1' : '2');
+    v.timestamp(e, 60, ms);
+    e.add(38, v.digits(1, 7));                    // OrderQty 1-7 digits
+    const bool limit = v.chance(85);
+    e.add(40, limit ? '2' : '1');
+    if (limit) v.price(e, 44);                    // Price on limit orders
+    if (v.chance(70)) e.add(59, v.chance(80) ? '0' : '3');  // TimeInForce 70%
+    if (v.chance(10)) e.add(58, v.text(5, 40, "abcdefghijklmnopqrstuvwxyz "));  // Text 10%
+    return std::string(e.finish());
+}
+
+std::string varied_execution_report(variety& v, std::uint64_t seq, std::int64_t ms) {
     char buf[512];
     fx::encoder e(buf, sizeof(buf));
     e.begin("8");
-    e.add(49, "VENUE");
-    e.add(56, "CLIENT");
-    e.add(34, o.seq);
-    e.add(52, t);
-    e.add(37, o.clordid + 5'000'000);
-    e.add(11, o.clordid);
-    e.add(17, o.clordid + 9'000'000);
-    e.add(150, 'F');
-    e.add(39, '2');
-    e.add(1, "ACC1");
-    e.add(55, "VOD.L");
-    e.add(54, '1');
-    e.add(38, o.qty);
-    e.add_decimal(44, static_cast<std::int64_t>(o.price), 2);
-    e.add(32, o.qty);
-    e.add_decimal(31, static_cast<std::int64_t>(o.price), 2);
-    e.add(151, std::uint64_t{0});
-    e.add(14, o.qty);
-    e.add_decimal(6, static_cast<std::int64_t>(o.price), 2);
-    e.add(60, t);
+    e.add(49, std::string_view("VENUE"));
+    e.add(56, std::string_view("CLIENT"));
+    e.add(34, seq);
+    v.timestamp(e, 52, ms);
+    e.add(37, v.id(8, 24));                       // OrderID
+    e.add(11, v.id(6, 20));                       // ClOrdID
+    e.add(17, v.id(8, 24));                       // ExecID
+    const bool fill = v.chance(60);
+    e.add(150, fill ? 'F' : '0');
+    e.add(39, fill ? (v.chance(70) ? '2' : '1') : '0');
+    if (v.chance(80)) e.add(1, v.id(3, 12));
+    e.add(55, v.symbol());
+    e.add(54, v.chance(50) ? '1' : '2');
+    e.add(38, v.digits(1, 7));
+    v.price(e, 44);
+    if (fill) {
+        e.add(32, v.digits(1, 7));
+        v.price(e, 31);
+    }
+    e.add(151, v.digits(1, 7));
+    e.add(14, v.digits(1, 7));
+    v.price(e, 6);
+    v.timestamp(e, 60, ms);
+    if (v.chance(10)) e.add(58, v.text(5, 40, "abcdefghijklmnopqrstuvwxyz "));
     return std::string(e.finish());
 }
 
-std::string heartbeat(const order_values& o) {
-    char ts[fx::utc_timestamp_length];
-    fx::format_utc_timestamp(o.ms, ts);
+std::string varied_heartbeat(variety& v, std::uint64_t seq, std::int64_t ms) {
     char buf[256];
     fx::encoder e(buf, sizeof(buf));
     e.begin("0");
-    e.add(49, "VENUE");
-    e.add(56, "CLIENT");
-    e.add(34, o.seq);
-    e.add(52, std::string_view(ts, sizeof(ts)));
+    e.add(49, std::string_view("VENUE"));
+    e.add(56, std::string_view("CLIENT"));
+    e.add(34, seq);
+    v.timestamp(e, 52, ms);
+    if (v.chance(20)) e.add(112, v.id(4, 16));    // TestReqID, answering a TestRequest
     return std::string(e.finish());
-}
-
-[[gnu::noinline]] std::string_view op_encode_c(fx::new_order_template& t, const order_values& o) {
-    return t.fill(o.seq, o.ms, o.clordid, o.qty, o.price);
 }
 
 struct result {
@@ -266,11 +325,12 @@ int main(int argc, char** argv) {
         return s;
     };
     std::vector<std::string> nos_s(inputs), er_s(inputs), hb_s(inputs);
+    variety vary(9);
     char scratch[512];
     for (std::size_t i = 0; i < inputs; ++i) {
-        nos_s[i] = std::string(encode_b(scratch, sizeof(scratch), orders[i]));
-        er_s[i] = execution_report(orders[i]);
-        hb_s[i] = heartbeat(orders[i]);
+        nos_s[i] = varied_new_order(vary, orders[i].seq, orders[i].ms);
+        er_s[i] = varied_execution_report(vary, orders[i].seq, orders[i].ms);
+        hb_s[i] = varied_heartbeat(vary, orders[i].seq, orders[i].ms);
     }
     const slots nos = make_slots(nos_s), er = make_slots(er_s), hb = make_slots(hb_s);
     std::vector<result> out;
