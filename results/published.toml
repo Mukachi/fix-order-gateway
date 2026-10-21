@@ -1,0 +1,3 @@
+# Published result sets: the files run.py report reads.
+# results/ keeps every run; publishing is listing a file here. Each set must
+# share one commit, machine and kernel command line.

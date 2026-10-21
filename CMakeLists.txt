@@ -77,3 +77,8 @@ endif()
 add_executable(codec_bench bench/codec_bench.cpp)
 target_link_libraries(codec_bench PRIVATE fixgw lfipc Threads::Threads)
 target_compile_definitions(codec_bench PRIVATE LFIPC_RESULTS_DIR="${CMAKE_SOURCE_DIR}/results")
+
+# One number everywhere: a stale RESULTS.md or README figure fails the suite.
+if(Python3_FOUND)
+  add_test(NAME report_check COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/run.py report --check)
+endif()

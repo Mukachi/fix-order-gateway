@@ -2,3 +2,9 @@
 
 A FIX 4.4 order entry gateway: session layer, recovery and order entry, written from the public
 specification. Work in progress: see [docs/design/001-scope.md](docs/design/001-scope.md).
+
+## Results
+
+<!-- results:codec-summary -->
+Codec figures: not yet measured (design note 002).
+<!-- /results -->
