@@ -1,3 +1,12 @@
 # Published result sets: the files run.py report reads.
 # results/ keeps every run; publishing is listing a file here. Each set must
 # share one commit, machine and kernel command line.
+
+# Measured with C1 kept by bench-on (lockfree-ipc note 004, Review
+# 2026-10-21). The three codec runs of 15:09-15:09Z were taken while idle
+# hyper-thread siblings spun in POLL; kept, not published (note 002, Review).
+[codec]
+note = "002"
+runs = ["codec-dev-lnx01-20261021T175022Z.json",
+        "codec-dev-lnx01-20261021T190515Z.json",
+        "codec-dev-lnx01-20261021T202010Z.json"]
