@@ -234,9 +234,11 @@ public:
     // Appends one record; false if it is too large or the write fails.
     bool append(record_kind kind, session_time t, std::string_view a, std::string_view b = {}) noexcept {
         if (a.size() + b.size() > journal_format::max_payload) return false;
-        const std::size_t n = encode_record(buffer_.data(), kind, t, a, b);
-        return write_all(buffer_.data(), n);
+        last_ = encode_record(buffer_.data(), kind, t, a, b);
+        return write_all(buffer_.data(), last_);
     }
+    // The bytes of the record last appended (for a strategy that also sends it).
+    std::string_view last_record() const noexcept { return {buffer_.data(), last_}; }
 
 private:
     bool write_all(const char* p, std::size_t n) noexcept {
@@ -251,6 +253,7 @@ private:
     }
     int fd_ = -1;
     std::vector<char> buffer_;
+    std::size_t last_ = 0;
 };
 
 }  // namespace fixgw

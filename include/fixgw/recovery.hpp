@@ -3,9 +3,11 @@
 // something journaled (D2), sent messages kept in memory and rebuilt by
 // replay (D3). Design: docs/design/004-store.md
 //
-// Strategy (durability, note 004 A to D):
+// Strategy (durability, note 004 A to D; durability.hpp):
 //   bool append(record_kind, session_time, std::string_view a, std::string_view b);
-//   bool make_durable();          the appended records are now as safe as the strategy promises
+//   durability make_durable(session_time);  durable: everything appended is as safe as
+//                                           the strategy promises; pending: not yet (B)
+//   durability poll(session_time);          between inputs: B's time bound
 // Out (downstream of the held outputs):
 //   void write(std::string_view bytes);                     to the connection
 //   void deliver(std::string_view message, bool replayed);  an application message, in order;
@@ -19,6 +21,7 @@
 //   bool release(std::string_view msg_type, std::string_view body);
 #pragma once
 
+#include <fixgw/durability.hpp>
 #include <fixgw/journal.hpp>
 #include <fixgw/session.hpp>
 
@@ -116,6 +119,13 @@ public:
     const session<held_sink<Policy>, memory_store>& state() const noexcept { return session_; }
     const memory_store& store() const noexcept { return store_; }
     bool failed() const noexcept { return failed_; }
+    bool holding() const noexcept { return pending_; }
+
+    // Between inputs: releases a group whose time bound has passed (B).
+    void poll(session_time t) {
+        if (!pending_ || failed_) return;
+        settle(journal_.poll(t));
+    }
 
     void on_connected(session_time t) {
         session_.on_connected(t);
@@ -194,22 +204,35 @@ private:
         return {session_.state(), session_.next_outbound(), session_.next_expected(), session_.queued()};
     }
 
-    // D1: the input made durable, then its outputs released. If the journal
-    // fails, nothing is released and the connection is closed: carrying on
-    // would send what recovery could not reproduce.
+    // D1: the input made durable, then its outputs released (with B, those of
+    // every input of the group, together). If the journal fails, nothing is
+    // released and the connection is closed: carrying on would send what
+    // recovery could not reproduce.
     void commit(record_kind k, session_time t, std::string_view a = {}, std::string_view b = {}) {
         if (replaying_) {
             held_.release_to(out_, true);
             return;
         }
-        if (failed_ || !journal_.append(k, t, a, b) || !journal_.make_durable()) {
-            if (!failed_) held_.log(session_log::error, "journal write failed: nothing released, disconnecting", 0);
-            failed_ = true;
+        if (failed_) {
             held_.clear();
-            out_.disconnect();
             return;
         }
-        held_.release_to(out_, false);
+        settle(journal_.append(k, t, a, b) ? journal_.make_durable(t) : durability::failed);
+    }
+    void settle(durability d) {
+        if (d == durability::pending) {
+            pending_ = true;
+            return;
+        }
+        pending_ = false;
+        if (d == durability::durable) {
+            held_.release_to(out_, false);
+            return;
+        }
+        held_.log(session_log::error, "journal write failed: nothing released, disconnecting", 0);
+        failed_ = true;
+        held_.clear();
+        out_.disconnect();
     }
 
     Strategy& journal_;
@@ -217,7 +240,7 @@ private:
     held_sink<Policy> held_;
     memory_store store_;
     session<held_sink<Policy>, memory_store> session_;
-    bool replaying_ = false, failed_ = false;
+    bool replaying_ = false, failed_ = false, pending_ = false;
 };
 
 }  // namespace fixgw
