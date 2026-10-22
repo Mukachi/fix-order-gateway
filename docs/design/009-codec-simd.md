@@ -77,12 +77,17 @@ states, not a blend:
   (sorting 1,000,000 values, the step that was found to set the state), then times 50,000 messages,
   in the benchmark's random visit order, one timing window each, as now.
 - *Classified by counters.* Each episode's branch mispredictions per message are counted (the
-  benchmark reads the CPU's counter around the episode, outside the timing windows). Episodes are
-  split into states at the largest gap in that count, when the gap is at least 1.5×; otherwise the
-  case has one state. The state is then a measurement, not a judgement made from the timings.
+  benchmark reads the CPU's counter around the episode, outside the timing windows). An episode is
+  core if at least 3 episodes, itself included, lie within 5% of it; core episodes within 10% of
+  their neighbour form a level; levels less than 1.5× or 0.5 per message apart are one state (a
+  state may hold sub-levels ~1.1–1.3× apart). Episodes that are not core are *mixed*: the state
+  changed during them; they are counted and kept out of every state's figures. The state is then a
+  measurement, not a judgement made from the timings. *(Revised 2026-10-22 after the check run;
+  the first rule, a split at the largest gap, is in Review.)*
 - *Published per state.* For each case and state: p50, p99 and p99.9 over all its episodes'
-  messages, mispredictions per message, and the share of episodes in that state. The shares are
-  published as observed, stated as not reproducible.
+  messages, mispredictions per message, and how many episodes fell in it; and each case's mixed
+  episodes. Episodes come in streaks, so the counts are not probabilities and are published as
+  not reproducible.
 - *Compared within a state.* Each step's gain or loss (scalar, SIMD, SIMD padded, two-stage) is
   stated fast against fast and slow against slow.
 - *Clock recorded.* Each run measures CPU 2's core clock (a chain of dependent adds timed by the
@@ -107,11 +112,12 @@ the counter shows that a split is the predictor and not something else.
 - S6. All three decoders and both framers measured, single messages and bursts, three runs,
   published; each step's gain or loss stated against the one before. *(Amendment, Draft: measured
   as episodes and published per state as in Design; gains and losses within a state.)*
-- S7. *(Amendment, Draft.)* In every case with two states, slow episodes have at least twice the
-  fast episodes' branch mispredictions per message.
-- S8. *(Amendment, Draft.)* Each state's p50 agrees across the three runs within 3%; a case whose
+- S7. *(Amendment.)* States are at least 1.5× and 0.5 per message apart in mispredictions per
+  message (revised from 2×, which A's ExecutionReport missed at 1.94 in the check run; the
+  classification now guarantees it, so the mixed count is what to watch).
+- S8. *(Amendment.)* Each state's p50 agrees across the three runs within 3%; a case whose
   state levels do not agree is not published, and the disagreement is reported here.
-- S9. *(Amendment, Draft.)* Each run records CPU 2's core clock at start and end.
+- S9. *(Amendment.)* Each run records CPU 2's core clock at start and end.
 
 ## Tasks
 
@@ -140,3 +146,4 @@ the counter shows that a split is the predictor and not something else.
 | 2026-10-22 | Draft | Amendment written for review: measure the two predictor states as episodes classified by counted mispredictions and publish per state (Design, S6–S9, Tasks). Open for agreement: counter access, option A or B |
 | 2026-10-22 | Agreed | Amendment approved by Shep, counter access option A: `bench-on` sets `perf_event_paranoid` to 2, `bench-off` restores it, and `lockfree-ipc`'s check records the value |
 | 2026-10-22 | Built (amendment) | `codec_bench`: every case runs as 200 episodes; each episode sorts the fixed prior-work values, reads the branch-misprediction counter (`perf_event_open`, user space, this thread; `read` calls outside the timing windows), times 1,000 discarded and 50,000 kept calls continuing through the random visit order, and reads the counter again. Episodes are split into states and each state's calls pooled for p50, p99, p99.9 and max; every episode's mispredictions per message are in the JSON. The bursts: the same prior work before each of the 21 repeats, repeats classified the same way. CPU 2's core clock is measured at the start and end. Without counter access the run refuses, naming `perf_event_paranoid`. Four choices the Draft left open: (1) the prior work sorts fixed synthetic timing-like values (600–663 with a 1% tail, seed 6), not the run's own timings, so it is the same in every run; checked first in a probe under load: it set the slow state in 109 of 300 chunks against 154 for the real timings and 27 for random 64-bit values (a pass minutes later: none for any of the three, the drift). (2) The split also needs the two sides 0.5 mispredictions per message apart, so a case with almost none (the empty window) stays one state. (3) 1,000 calls per episode are discarded as warm-up after the sort. (4) `run.py` groups each case's states across a set's runs by the same rule; more than two, or two from one run grouped as one, is an error; S8 is enforced (a state's p50 more than 3% apart across runs stops the report unless `published.toml` lists the case under `withheld`, which then shows no figures). Tested on a fabricated three-run set: per-state rows, a state missing from one run (share 0–25%), the S8 stop and the withheld path; the published note 002 set renders unchanged. `lockfree-ipc` pinned at `1a42550` (records `perf_event_paranoid`). Run time: about 9 minutes, most of it the 5,000 sorts |
+| 2026-10-22 | Built (amendment, revised) | **Check run in bench mode** (scratchpad, not `results/`; 4.5 minutes; bench mode met, `perf_event_paranoid` 2, core clock 3.40 GHz throughout). Both states appear in bench mode in every decode case, the slow one in most episodes. Three faults in the first rule: (1) the sort before each episode does not re-roll the state: episodes come in streaks, typically a case starts fast for 3–15 episodes, changes to slow and stays (scalar NewOrderSingle: 8, 7, 7, then 23 for the rest), a few flip back and forth (two-stage Heartbeat); so a share of episodes estimates nothing; (2) episodes during which the state changed fall between the levels and can bridge the gap: scalar ExecutionReport (37 episodes at ~15, 157 at 37–39, singletons at 17–31) came out as one state, a blend; (3) states differ 3–10×, but inside a state there are sub-levels 1.1–1.3× apart (scalar NewOrderSingle 7 and 9; scalar Heartbeat 5.3 and 6.5). S7 at 2× failed only for A's ExecutionReport (37 against 73: 1.94). Revised with Shep: classification by density (Design), episode counts and mixed counts instead of shares, S7 at 1.5×. On the check run's data every decode case gives two states with 1–8 mixed episodes of 200; frame and encode cases one state; the C++ classifier and a Python prototype agree on all 25 cases. `run.py` shows Episodes and Mixed columns |

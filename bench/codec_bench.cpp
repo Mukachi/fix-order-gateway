@@ -163,32 +163,43 @@ struct prior_work {
     }
 };
 
-// Where sorted mispredictions per message split into two states: the largest
-// ratio between neighbours, if at least 1.5x and 0.5 apart (so a case with
-// almost none, like the empty window, stays one state). 0: one state.
-std::size_t split_at(const std::vector<double>& sorted) {
-    double best = 1.0;
-    std::size_t at = 0;
-    for (std::size_t i = 1; i < sorted.size(); ++i) {
-        const double lo = sorted[i - 1], hi = sorted[i];
-        if (hi - lo < 0.5 || hi < 1.5 * lo) continue;
-        const double r = lo > 0 ? hi / lo : 1e9;
-        if (r > best) best = r, at = i;
+// Episodes (or burst repeats) grouped into the predictor's states by their
+// mispredictions per message (note 009, amendment, revised after the check
+// run): an episode is core if at least 3 episodes, itself included, lie within
+// 5% of it; core episodes within 10% of their neighbour form a level; levels
+// less than 1.5x or 0.5 per message apart are one state (a state can hold
+// sub-levels ~1.1-1.3x apart). The rest are mixed, the state having changed
+// during them: counted, kept out of every state's figures.
+struct classified {
+    std::vector<std::vector<std::size_t>> states;  // fewest mispredictions first
+    std::size_t mixed = 0;
+};
+classified classify(const std::vector<double>& v) {
+    std::vector<std::size_t> core;
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        std::size_t near = 0;
+        for (const double x : v) near += (x - v[i] <= 0.05 * v[i] + 0.01 && v[i] - x <= 0.05 * v[i] + 0.01) ? 1 : 0;
+        if (near >= 3) core.push_back(i);
     }
-    return at;
-}
-
-// Index groups of items ordered by `key`, split into states by split_at.
-std::vector<std::vector<std::size_t>> states_of(const std::vector<double>& key) {
-    std::vector<std::size_t> idx(key.size());
-    std::iota(idx.begin(), idx.end(), std::size_t{0});
-    std::sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) { return key[a] < key[b]; });
-    std::vector<double> sorted;
-    for (const auto i : idx) sorted.push_back(key[i]);
-    const std::size_t at = split_at(sorted);
-    if (at == 0) return {idx};
-    return {{idx.begin(), idx.begin() + static_cast<std::ptrdiff_t>(at)},
-            {idx.begin() + static_cast<std::ptrdiff_t>(at), idx.end()}};
+    std::sort(core.begin(), core.end(), [&](std::size_t a, std::size_t b) { return v[a] < v[b]; });
+    classified c;
+    c.mixed = v.size() - core.size();
+    std::vector<std::vector<std::size_t>> levels;
+    for (std::size_t k = 0; k < core.size(); ++k) {
+        if (k == 0 || v[core[k]] > v[core[k - 1]] * 1.10 + 0.02) levels.emplace_back();
+        levels.back().push_back(core[k]);
+    }
+    for (const auto& level : levels) {
+        if (!c.states.empty()) {
+            const double lo = v[c.states.back().back()], hi = v[level.front()];
+            if (hi < 1.5 * lo || hi - lo < 0.5) {
+                c.states.back().insert(c.states.back().end(), level.begin(), level.end());
+                continue;
+            }
+        }
+        c.states.push_back(level);
+    }
+    return c;
 }
 
 double median_of(std::vector<double> v) {
@@ -203,6 +214,7 @@ struct state {
 };
 struct measured {
     std::vector<state> states;  // fewest mispredictions first
+    std::size_t mixed = 0;
     std::vector<double> episode_mispredictions;
 };
 
@@ -227,7 +239,9 @@ measured run_episodes(Op&& op, const branch_misses& bm, prior_work& prior, std::
         const auto m1 = bm.read();
         m.episode_mispredictions[e] = static_cast<double>(m1 - m0) / (episode_warmup + episode_messages);
     }
-    for (const auto& group : states_of(m.episode_mispredictions)) {
+    const auto c = classify(m.episode_mispredictions);
+    m.mixed = c.mixed;
+    for (const auto& group : c.states) {
         std::vector<ticks> pooled;
         pooled.reserve(group.size() * episode_messages);
         std::vector<double> mis;
@@ -642,12 +656,12 @@ int main(int argc, char** argv) {
         run.w.member("operation", r.operation);
         run.w.member("message", r.message);
         run.w.member("bytes", r.bytes);
+        run.w.member("mixed_episodes", r.cost.mixed);
         run.w.key("states");
         run.w.begin_array();
         for (const auto& st : r.cost.states) {
             run.w.begin_object();
             run.w.member("episodes", st.episodes);
-            run.w.member("share", static_cast<double>(st.episodes) / episodes);
             run.w.member("mispredictions_per_message", st.mispredictions_per_message);
             run.w.member("samples", st.cost.samples);
             run.w.member("warmup_discarded", st.cost.warmup_discarded);
@@ -680,9 +694,11 @@ int main(int argc, char** argv) {
         run.w.key(t.name);
         run.w.begin_object();
         run.w.member("repeats", t.per_second.size());
+        const auto c = classify(t.mispredictions);
+        run.w.member("mixed_repeats", c.mixed);
         run.w.key("states");
         run.w.begin_array();
-        for (const auto& group : states_of(t.mispredictions)) {
+        for (const auto& group : c.states) {
             std::vector<double> ps, mis;
             for (const auto i : group) ps.push_back(t.per_second[i]), mis.push_back(t.mispredictions[i]);
             std::sort(ps.begin(), ps.end());

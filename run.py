@@ -14,9 +14,9 @@ set. Figures are min-max over a set's runs. Standard library only.
 
 Runs measured as episodes (note 009, amendment of 2026-10-22) are published
 per predictor state: each case's states from every run are grouped across the
-set by mispredictions per message (the benchmark's own split rule), and each
-state's p50 must agree across runs within 3% (S8) unless the manifest lists the
-case under `withheld`.
+set by mispredictions per message (states at least 1.5x and 0.5 apart, as the
+benchmark separates them), and each state's p50 must agree across runs within
+3% (S8) unless the manifest lists the case under `withheld`.
 """
 import argparse
 import importlib.util
@@ -141,12 +141,12 @@ def state_rows(lf, runs, withheld):
         for name, g in by_state([(i, st) for i, cs in present for st in cs["states"]], k):
             sts = [st for _, st in g]
             agree(k, name, [st["p50_ns"] for st in sts], held)
-            shares = [next((st["share"] for r, st in g if r == i), 0.0) for i in range(n)]
+            counts = [next((st["episodes"] for r, st in g if r == i), 0) for i in range(n)]
             figures = (["withheld (note 009)", "–", "–", "–"] if held else
                        [lf.rng([st[f] for st in sts]) for f in ("p50_ns", "p99_ns", "p999_ns", "max_ns")])
             rows.append([c["operation"], c["message"], c["representation"], c["bytes"] or "–", name,
                          lf.rng([st["mispredictions_per_message"] for st in sts], lambda v: f"{v:.2f}"),
-                         lf.rng(shares, lambda v: f"{100 * v:.0f}%")] + figures)
+                         lf.rng(counts, str), lf.rng([cs["mixed_episodes"] for _, cs in present], str)] + figures)
     return rows
 
 
@@ -178,16 +178,18 @@ def state_section(lf, note, runs, withheld):
             f"work ({c0['prior_work']}). On this CPU the branch predictor has two stable states for the decode "
             f"code, and the work run just before decoding sets which one an episode gets (note 009): episodes are "
             f"classified by their counted branch mispredictions per message, and results are given per state, "
-            f"never pooled. The share of episodes in each state is as observed and is not reproducible: it "
-            f"drifts with conditions outside the code. Decoding: A, fields copied into a hash map (the "
+            f"never pooled. Episodes: how many of a run's {c0['episodes']} were in the state; they come in "
+            f"streaks (a case typically starts in one state and changes once or a few times), so the counts are "
+            f"not probabilities and are not reproducible. Mixed: episodes during which the state changed, kept "
+            f"out of every state's figures. Decoding: A, fields copied into a hash map (the "
             f"conventional design, the baseline, note 002); scalar, views over the buffer found a byte at a time; "
             f"SIMD, the same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a "
             f"buffer with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message "
             f"(note 009). Encoding (note 002): A, fields as strings in a vector; B, appended to a fixed buffer; C, "
             f"a pre-encoded NewOrderSingle with fixed-width slots; each formats the timestamp and ClOrdID per "
             f"order. Harness: lockfree-ipc `{c0['lockfree_ipc_commit'][:7]}`.", "",
-            lf.table(["Operation", "Message", "Path", "Bytes", "State", "Mispred./msg", "Share", "p50", "p99",
-                      "p99.9", "max"], state_rows(lf, runs, withheld)),
+            lf.table(["Operation", "Message", "Path", "Bytes", "State", "Mispred./msg", "Episodes", "Mixed", "p50",
+                      "p99", "p99.9", "max"], state_rows(lf, runs, withheld)),
             "",
             f"Throughput, {t0['operation']}, {t0['messages']:,} messages (a random sequence of the inputs) in "
             f"batches of whole messages up to {t0['batch_bytes']:,} bytes (two-stage indexes each batch inside the "
@@ -270,11 +272,12 @@ def readme_blocks(lf, sets, withheld):
     runs = sets["codec"][1]
     if is_episodes(runs):
         rows = [r for r in state_rows(lf, runs, withheld["codec"]) if r[1] == "NewOrderSingle" and r[0] != "frame"]
-        return {"codec-summary": lf.table(["Operation", "Message", "Repr.", "Bytes", "State", "Mispred./msg", "Share",
-                                           "p50", "p99", "p99.9", "max"], rows) +
+        return {"codec-summary": lf.table(["Operation", "Message", "Repr.", "Bytes", "State", "Mispred./msg",
+                                           "Episodes", "Mixed", "p50", "p99", "p99.9", "max"], rows) +
                 f"\n\nNs per call, range over {len(runs)} runs, clock cost included (about the empty window's p50). "
-                f"The branch predictor has two stable states for this code; figures are per state, and the share "
-                f"of each is not reproducible (note 009). Full tables and conditions: [RESULTS.md](RESULTS.md).\n"}
+                f"The branch predictor has two stable states for this code; figures are per state, never pooled, "
+                f"and how many episodes fall in each is not reproducible (note 009). Full tables and conditions: "
+                f"[RESULTS.md](RESULTS.md).\n"}
     rows = [r for r in codec_rows(lf, runs) if r[1] == "NewOrderSingle" and r[0] != "frame"]
     return {"codec-summary": lf.table(["Operation", "Message", "Repr.", "Bytes", "p50", "p99", "p99.9", "max"], rows) +
             f"\n\nNs per call, range over {len(runs)} runs, clock cost included (about the empty window's p50). "
