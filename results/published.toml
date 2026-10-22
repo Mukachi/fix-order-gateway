@@ -2,11 +2,17 @@
 # results/ keeps every run; publishing is listing a file here. Each set must
 # share one commit, machine and kernel command line.
 
-# Measured with C1 kept by bench-on (lockfree-ipc note 004, Review
-# 2026-10-21). The three codec runs of 15:09-15:09Z were taken while idle
-# hyper-thread siblings spun in POLL; kept, not published (note 002, Review).
+# Measured as episodes classified by the branch predictor's state (note 009,
+# amendment of 2026-10-22), bench mode with every idle state on the reserved
+# CPUs and perf_event_paranoid 2. Replaces the 2026-10-21 set
+# (codec-dev-lnx01-20261021T175022Z, T190515Z, T202010Z: note 002, C1 cap,
+# one figure per case, which pooled the two states), kept in results/.
+# Withheld (S8): scalar framing of ExecutionReport and Heartbeat, whose p50
+# moved 6.8% and 3.4% across the three runs in one predictor state (note 009,
+# Review 2026-10-22).
 [codec]
-note = "002"
-runs = ["codec-dev-lnx01-20261021T175022Z.json",
-        "codec-dev-lnx01-20261021T190515Z.json",
-        "codec-dev-lnx01-20261021T202010Z.json"]
+note = "009"
+runs = ["codec-dev-lnx01-20261022T192017Z.json",
+        "codec-dev-lnx01-20261022T192443Z.json",
+        "codec-dev-lnx01-20261022T192912Z.json"]
+withheld = ["frame_scalar_er", "frame_scalar_hb"]

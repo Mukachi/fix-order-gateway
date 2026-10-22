@@ -8,28 +8,68 @@ HP ProLiant DL380 Gen9, BIOS P89 (08/29/2024); 2 × Intel(R) Xeon(R) CPU E5-2699
 
 | Set | Runs | First run | Commit | Governor | Idle states enabled | Turbo | NUMA balancing | Boot isolation | Reserved CPUs |
 |---|---|---|---|---|---|---|---|---|---|
-| codec (note 002) | 3 | 2026-10-21 17:50 UTC | 21efe5d | performance | C1 POLL | on | off | yes | 2-21,46-65 |
+| codec (note 009) | 3 | 2026-10-22 19:20 UTC | 1f21799 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 
 Every run met note 004's bench-mode conditions (each file's `environment.bench_mode`, checked before use) and was built clean; compiler and flags are in each file's `environment.build`. Ranges are min–max over a set's runs.
 
-## Codec (note 002)
+## Codec (note 009)
 
-Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty window, the clock's own cost. CPU 2, 1,000,000 samples per case, 100,000 warm-up discarded, 1,024 different messages visited in a random order (cycling in a fixed order lets the branch predictor memorise the cycle), each in its own 512-byte slot. Decoding: A, fields copied into a hash map (the conventional design, the baseline, note 002); scalar, views over the buffer found a byte at a time; SIMD, the same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a buffer with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message (note 009). Encoding (note 002): A, fields as strings in a vector; B, appended to a fixed buffer; C, a pre-encoded NewOrderSingle with fixed-width slots; each formats the timestamp and ClOrdID per order. Harness: lockfree-ipc `efbccdc`.
+Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty window, the clock's own cost. CPU 2, core clock 3.40–3.40 GHz (measured at each run's start and end); 1,024 different messages visited in a random order, each in its own 512-byte slot. Each case runs as 200 episodes of 50,000 timed calls (1,000 warm-up discarded per episode), each after the same fixed work (sort of 1,000,000 timing-like values, before every episode and burst repeat). On this CPU the branch predictor has two stable states for the decode code, and the work run just before decoding sets which one an episode gets (note 009): episodes are classified by their counted branch mispredictions per message, and results are given per state, never pooled. Episodes: how many of a run's 200 were in the state; they come in streaks (a case typically starts in one state and changes once or a few times), so the counts are not probabilities and are not reproducible. Mixed: episodes during which the state changed, kept out of every state's figures. Decoding: A, fields copied into a hash map (the conventional design, the baseline, note 002); scalar, views over the buffer found a byte at a time; SIMD, the same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a buffer with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message (note 009). Encoding (note 002): A, fields as strings in a vector; B, appended to a fixed buffer; C, a pre-encoded NewOrderSingle with fixed-width slots; each formats the timestamp and ClOrdID per order. Harness: lockfree-ipc `1a42550`.
 
-| Operation | Message | Path | Bytes | p50 | p99 | p99.9 | max |
-|---|---|---|---|---|---|---|---|
-| empty window: start(); stop() | - | - | – | 19 | 20 | 20 | 20 |
-| frame and decode | NewOrderSingle | A | 165 | 958–1,210 | 1,011–1,333 | 1,023–1,367 | 1,413–1,686 |
-| frame and decode | ExecutionReport | A | 230 | 1,592–1,974 | 1,733–2,207 | 1,788–2,274 | 2,065–2,647 |
-| encode | NewOrderSingle | A | 165 | 1,101–1,120 | 1,140–1,159 | 1,156–1,173 | 2,331–2,375 |
-| encode | NewOrderSingle | B | 165 | 325 | 350–362 | 368–376 | 755–1,572 |
-| encode | NewOrderSingle | C | 190 | 187–190 | 190–192 | 192–196 | 512–571 |
-| frame and decode | NewOrderSingle | B | 165 | 203–213 | 222–242 | 260–276 | 579–675 |
-| frame and decode | ExecutionReport | B | 230 | 283–478 | 310–568 | 339–597 | 652–986 |
-| frame and decode | Heartbeat | B | 79 | 116–137 | 142–166 | 153–305 | 503–606 |
+| Operation | Message | Path | Bytes | State | Mispred./msg | Episodes | Mixed | p50 | p99 | p99.9 | max |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| empty window: start(); stop() | - | - | – | one | 0.00 | 200 | 0 | 16 | 17 | 17 | 111–119 |
+| frame | NewOrderSingle | scalar | 173 | one | 1.00 | 200 | 0 | 137–138 | 178–179 | 258–272 | 1,594–1,831 |
+| frame | NewOrderSingle | SIMD | 173 | one | 1.52–1.54 | 200 | 0 | 68–70 | 97–99 | 258–270 | 1,655–17.4 µs |
+| frame and decode | NewOrderSingle | A | 173 | fast | 13.05–13.94 | 15–131 | 2–4 | 987–1,008 | 1,212–1,242 | 1,301–1,329 | 2,255–2,866 |
+| frame and decode | NewOrderSingle | A | 173 | slow | 42.68–42.72 | 65–182 | 2–4 | 1,210–1,216 | 1,459–1,467 | 1,548–1,559 | 2,624–2,900 |
+| frame and decode | NewOrderSingle | scalar | 173 | fast | 6.87–6.91 | 92–119 | 2–7 | 365–373 | 461–481 | 641–650 | 1,859–17.6 µs |
+| frame and decode | NewOrderSingle | scalar | 173 | slow | 24.41–24.84 | 75–106 | 2–7 | 499–501 | 601–609 | 756–757 | 1,729–1,987 |
+| frame and decode | NewOrderSingle | SIMD | 173 | fast | 4.17 | 17–147 | 1–6 | 280–281 | 402 | 624–625 | 1,548–2,071 |
+| frame and decode | NewOrderSingle | SIMD | 173 | slow | 16.32–16.80 | 49–182 | 1–6 | 365–368 | 451–454 | 695–697 | 1,826–2,204 |
+| frame and decode | NewOrderSingle | SIMD, padded | 173 | fast | 2.11–2.13 | 104–107 | 6–12 | 248–249 | 366–383 | 592–595 | 1,700–1,960 |
+| frame and decode | NewOrderSingle | SIMD, padded | 173 | slow | 11.14–11.50 | 84–90 | 6–12 | 313–315 | 387–391 | 654–656 | 1,739–1,818 |
+| frame and decode | NewOrderSingle | two-stage | 173 | fast | 2.35–2.39 | 71–99 | 3–7 | 282–283 | 399–413 | 623–627 | 1,728–2,049 |
+| frame and decode | NewOrderSingle | two-stage | 173 | slow | 13.91–14.60 | 94–126 | 3–7 | 364–366 | 448–449 | 691–694 | 1,839–1,942 |
+| frame | ExecutionReport | scalar | 250 | one | 1.00 | 200 | 0 | withheld (note 009) | – | – | – |
+| frame | ExecutionReport | SIMD | 250 | one | 1.50–1.51 | 200 | 0 | 72–74 | 104–106 | 256–280 | 1,540–1,564 |
+| frame and decode | ExecutionReport | A | 250 | fast | 35.09–36.97 | 25–133 | 2 | 1,701–1,721 | 2,031–2,046 | 2,150–2,164 | 3,133–3,454 |
+| frame and decode | ExecutionReport | A | 250 | slow | 68.20–72.39 | 65–173 | 2 | 1,969–2,000 | 2,270–2,299 | 2,363–2,396 | 3,530–3,803 |
+| frame and decode | ExecutionReport | scalar | 250 | fast | 15.08–15.18 | 55–136 | 3–8 | 532–545 | 642–665 | 772–777 | 2,187–18.1 µs |
+| frame and decode | ExecutionReport | scalar | 250 | slow | 38.22–39.90 | 58–142 | 3–8 | 718–723 | 834–839 | 922–929 | 1,911–2,239 |
+| frame and decode | ExecutionReport | SIMD | 250 | fast | 2.40–2.44 | 30–167 | 2–9 | 342–343 | 427–439 | 679–682 | 1,833–2,084 |
+| frame and decode | ExecutionReport | SIMD | 250 | slow | 16.35–17.32 | 29–168 | 2–9 | 443–446 | 602–619 | 792–795 | 1,944–2,040 |
+| frame and decode | ExecutionReport | SIMD, padded | 250 | fast | 2.17–2.23 | 62–162 | 4–8 | 316–320 | 401–440 | 653–672 | 1,766–1,841 |
+| frame and decode | ExecutionReport | SIMD, padded | 250 | slow | 11.97–12.47 | 30–131 | 4–8 | 386–388 | 491–499 | 731–736 | 1,655–2,043 |
+| frame and decode | ExecutionReport | two-stage | 250 | fast | 4.76–4.82 | 67–119 | 4–7 | 384–385 | 467–474 | 724–730 | 1,641–17.2 µs |
+| frame and decode | ExecutionReport | two-stage | 250 | slow | 19.26–20.59 | 76–129 | 4–7 | 487–493 | 574–584 | 815–821 | 1,997–2,291 |
+| frame | Heartbeat | scalar | 92 | one | 1.00–1.27 | 199–200 | 0–1 | withheld (note 009) | – | – | – |
+| frame | Heartbeat | SIMD | 92 | one | 0.55 | 200 | 0 | 54 | 79 | 217 | 1,509–5,005 |
+| frame and decode | Heartbeat | A | 92 | fast | 1.85–2.04 | 34–48 | 3–6 | 447–449 | 543–562 | 685–746 | 1,769–18.6 µs |
+| frame and decode | Heartbeat | A | 92 | slow | 6.24–6.38 | 149–160 | 3–6 | 449–451 | 675–682 | 812–814 | 1,879–2,085 |
+| frame and decode | Heartbeat | scalar | 92 | fast | 1.40–1.41 | 34–73 | 5–9 | 186–188 | 261–278 | 496–498 | 1,653–1,891 |
+| frame and decode | Heartbeat | scalar | 92 | slow | 6.02–7.25 | 118–161 | 5–9 | 233–237 | 319 | 541–544 | 1,746–1,988 |
+| frame and decode | Heartbeat | SIMD | 92 | fast | 1.02–1.03 | 55–94 | 7–8 | 161 | 222–223 | 498–500 | 1,434–1,785 |
+| frame and decode | Heartbeat | SIMD | 92 | slow | 6.95–6.99 | 98–137 | 7–8 | 214–215 | 281–285 | 504–521 | 1,697–1,982 |
+| frame and decode | Heartbeat | SIMD, padded | 92 | fast | 0.69–0.70 | 53–90 | 7–12 | 147 | 300–302 | 503–505 | 1,595–1,852 |
+| frame and decode | Heartbeat | SIMD, padded | 92 | slow | 5.67–5.89 | 98–139 | 7–12 | 187 | 275–283 | 522–529 | 1,635–1,675 |
+| frame and decode | Heartbeat | two-stage | 92 | fast | 0.67–0.68 | 41–66 | 4–9 | 167 | 225–228 | 517–519 | 1,613–1,976 |
+| frame and decode | Heartbeat | two-stage | 92 | slow | 6.81–7.10 | 125–152 | 4–9 | 217–218 | 275–277 | 506–541 | 1,686–2,009 |
+| encode | NewOrderSingle | A | 173 | fast | 0.89 | 5–8 | 0–1 | 878–881 | 917–920 | 937–942 | 1,310–2,152 |
+| encode | NewOrderSingle | A | 173 | slow | 8.81–11.36 | 191–195 | 0–1 | 937–951 | 1,041–1,062 | 1,070–1,092 | 2,392–2,411 |
+| encode | NewOrderSingle | B | 173 | fast | 0.19 | 24–99 | 0–1 | 260 | 283 | 302–306 | 1,635–1,697 |
+| encode | NewOrderSingle | B | 173 | slow | 1.57–1.62 | 100–176 | 0–1 | 262 | 291 | 308–309 | 1,654–1,704 |
+| encode | NewOrderSingle | C | 190 | one | 0.00 | 200 | 0 | 154 | 158 | 161–168 | 1,535–1,542 |
 
-Throughput, frame and decode (B), NewOrderSingle, coalesced, 100,000 messages, 21 repeats per run, million messages per second:
+Throughput, frame and decode, NewOrderSingle, coalesced, 100,000 messages (a random sequence of the inputs) in batches of whole messages up to 16,384 bytes (two-stage indexes each batch inside the timing), 21 repeats per run, each after the same fixed work, classified by state as above; million messages per second:
 
-| Path | Median | Slowest repeat | Fastest repeat |
-|---|---|---|---|
-| B | 3.41–3.43 | 3.41 | 3.43 |
+| Path | State | Mispred./msg | Repeats | Median | Slowest repeat | Fastest repeat |
+|---|---|---|---|---|---|---|
+| scalar | fast | 7.72–7.77 | 58 | 3.52 | 3.51 | 3.52 |
+| scalar | slow | 24.70 | 5 | 2.47 | 2.47 | 2.47 |
+| SIMD | fast | 4.19–4.20 | 39 | 3.93 | 3.93 | 3.94 |
+| SIMD | slow | 16.13 | 19 | 3.01 | 3.01 | 3.02 |
+| SIMD, padded | fast | 2.15–2.16 | 40 | 4.45 | 4.44 | 4.45 |
+| SIMD, padded | slow | 11.38 | 18 | 3.54 | 3.53 | 3.54 |
+| two-stage | fast | 4.25–4.33 | 27 | 3.82–3.85 | 3.78 | 3.92 |
+| two-stage | slow | 17.47–17.50 | 33 | 2.89 | 2.87 | 2.93 |
