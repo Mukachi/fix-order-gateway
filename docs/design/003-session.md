@@ -1,6 +1,6 @@
 # 003 — Session
 
-**Status:** Agreed · **Updated:** 2026-10-22
+**Status:** Built (partial) · **Updated:** 2026-10-22
 
 ## Proposal
 
@@ -174,11 +174,12 @@ same outputs, byte for byte, which is what recovery by replay (note 004) depends
 
 ## Tasks
 
-- [ ] Session types, configuration, the transition table; recording sink, in-memory store
-- [ ] Logon and logout, both roles; timers
-- [ ] Inbound sequence rules, ResendRequest and SequenceReset (both directions); Reject
-- [ ] Outbound queue while not logged on (D2); stale-order hook
-- [ ] Scenario tests (S2); determinism (S3); paired fuzzer (S4); S5; S6 check
+- [x] Session types, configuration, the transition table; recording sink, in-memory store
+- [x] Logon and logout, both roles; timers
+- [x] Inbound sequence rules, ResendRequest and SequenceReset (both directions); Reject
+- [x] Outbound queue while not logged on (D2); stale-order hook
+- [x] Scenario tests (S2); determinism (S3); S5
+- [ ] Paired fuzzer (S4); S6 check; aarch64 run (S7)
 - [ ] Review
 
 ## Review
@@ -187,3 +188,4 @@ same outputs, byte for byte, which is what recovery by replay (note 004) depends
 |---|---|---|
 | 2026-10-22 | Draft | Written for review. Sources: FIX 4.4 Volume 2; *FIX Session Layer Technical Standard* (2020 errata); *FIX Session Layer Test Cases* V1.0 (June 2020), its scenario list read from a published HTML copy (FIXT 1.1 numbering; FIX 4.4's differs only in version-specific reject reasons), to be checked against the official document in note 006. Message recovery: only Reject among the admin messages is resent; the rest are gap-filled |
 | 2026-10-22 | Agreed | Approved by Shep, all four decisions as proposed: D1 drop a message above a gap and request from the gap to 0; D2 the session queues application messages unnumbered while not logged on (bounded) and numbers them when sent, after the stale-order hook; D3 a sink as a template parameter; D4 ResetSeqNumFlag supported both ways |
+| 2026-10-22 | Built (partial) | `include/fixgw/session.hpp`: the session as a class template over sink and store (D3), states and transitions as designed; inbound framing, decoding and checks in the order: garbled ignored (a frame starting `8=FIX.` with another version ends the session, scenario 2i, which the framer alone would only skip); invalid, Reject with the codec's reason; CompIDs and SendingTime (Reject 9 or 10, Logout, disconnect); SequenceReset-Reset whatever its number; too low (PossDup ignored, otherwise Logout with "MsgSeqNum too low, expecting E but received S"); PossDup without, or after, OrigSendingTime (Reject 1 or 10); too high (D1: one ResendRequest from the gap to 0, ResendRequest and Logout above a gap still handled); then by MsgType. Outbound stamped, encoded with encoder B (`add_raw` added for a body the caller built), recorded in the store, written. Resend: application messages and Reject from the store, re-encoded with PossDupFlag=Y, OrigSendingTime and a new SendingTime; runs of the rest, and anything missing, one gap fill each (PossDupFlag=Y, OrigSendingTime the time of sending). Not decided by the session: duplicate identity at logon (scenario 1S b) needs a view across sessions: the engine's, note 005. `tests/session_test.cpp`: 60 checks, every scenario listed in S2 plus D2, D4 and S3; four mutants (gap fill start, D1 delivering above a gap, TestRequest timing, Reset lowering by one) each caught, the last only after a boundary case was added. Passes under ASan and UBSan, TSan, and a baseline x86-64 build; the aarch64 cross-build compiles with warnings as errors but was not run (no qemu here, and this repo has no CI yet) |

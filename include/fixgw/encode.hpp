@@ -107,6 +107,13 @@ public:
         add(tag, std::string_view(v, static_cast<std::size_t>(tmp + sizeof(tmp) - v)));
     }
     void add(std::uint32_t tag, char value) noexcept { add(tag, std::string_view(&value, 1)); }
+    // Fields already encoded as "tag=value" SOH ..., appended as they are (a
+    // body the caller built, note 003).
+    void add_raw(std::string_view fields) noexcept {
+        if (!room(fields.size())) return;
+        std::memcpy(buf_ + pos_, fields.data(), fields.size());
+        pos_ += fields.size();
+    }
     // A decimal from an integer count of 10^-decimals: (7253, 2) is "72.53".
     void add_decimal(std::uint32_t tag, std::int64_t mantissa, int decimals) noexcept {
         char tmp[24];
