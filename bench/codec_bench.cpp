@@ -166,10 +166,11 @@ struct prior_work {
 // Episodes (or burst repeats) grouped into the predictor's states by their
 // mispredictions per message (note 009, amendment, revised after the check
 // run): an episode is core if at least 3 episodes, itself included, lie within
-// 5% of it; core episodes within 10% of their neighbour form a level; levels
-// less than 1.5x or 0.5 per message apart are one state (a state can hold
-// sub-levels ~1.1-1.3x apart). The rest are mixed, the state having changed
-// during them: counted, kept out of every state's figures.
+// 5% of it; core episodes within 10% of their neighbour form a level, kept if
+// it has at least 5 episodes; levels less than 1.5x or 0.5 per message apart
+// are one state (a state can hold sub-levels ~1.1-1.3x apart). The rest are
+// mixed, the state having changed during them: counted, kept out of every
+// state's figures.
 struct classified {
     std::vector<std::vector<std::size_t>> states;  // fewest mispredictions first
     std::size_t mixed = 0;
@@ -183,13 +184,15 @@ classified classify(const std::vector<double>& v) {
     }
     std::sort(core.begin(), core.end(), [&](std::size_t a, std::size_t b) { return v[a] < v[b]; });
     classified c;
-    c.mixed = v.size() - core.size();
     std::vector<std::vector<std::size_t>> levels;
     for (std::size_t k = 0; k < core.size(); ++k) {
         if (k == 0 || v[core[k]] > v[core[k - 1]] * 1.10 + 0.02) levels.emplace_back();
         levels.back().push_back(core[k]);
     }
+    std::size_t kept = 0;
     for (const auto& level : levels) {
+        if (level.size() < 5) continue;
+        kept += level.size();
         if (!c.states.empty()) {
             const double lo = v[c.states.back().back()], hi = v[level.front()];
             if (hi < 1.5 * lo || hi - lo < 0.5) {
@@ -199,6 +202,7 @@ classified classify(const std::vector<double>& v) {
         }
         c.states.push_back(level);
     }
+    c.mixed = v.size() - kept;
     return c;
 }
 
