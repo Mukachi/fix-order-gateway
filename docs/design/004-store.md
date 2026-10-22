@@ -1,6 +1,6 @@
 # 004 — Store and recovery
 
-**Status:** Draft · **Updated:** 2026-10-22
+**Status:** Agreed · **Updated:** 2026-10-22
 
 ## Proposal
 
@@ -158,3 +158,4 @@ here.
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-22 | Draft | Written for review. Storage examined first: `/` is ext4 on one Smart Array logical volume, write cache write-through as the kernel sees it; `fdatasync` probe p50 130 µs |
+| 2026-10-22 | Agreed | Approved by Shep, D1–D4 as proposed. On D2: the session has no clock of its own, so the engine calls `on_tick` often (perhaps every loop pass) to let its timers fire; almost every call finds nothing due and changes nothing. Only a tick that produced output or a disconnect is journaled, with its clock readings, so replay reproduces that message with the same MsgSeqNum and SendingTime; skipping the rest is safe because a tick that does nothing changes no state (every timer branch in the session writes or disconnects; S2 checks replay equality). Open: the Smart Array cache's protection, for A's and B's guarantee |
