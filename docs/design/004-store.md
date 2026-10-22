@@ -81,9 +81,12 @@ at each sequence reset (D4 of note 003) and records which file it follows.
 On this machine: the journal lives on `/` (ext4 on an HPE Smart Array logical volume; `/tmp` is
 memory), whose write cache the kernel sees as write-through. A probe (2,000 appends of 200 bytes,
 each with `fdatasync`, normal mode): p50 130 µs, p99 261 µs, max 616 µs, too fast for the disks
-alone, so the controller's cache is absorbing writes. Whether that cache survives power loss (flash
-or battery backed) decides A's and B's guarantee here; until it is confirmed, they are stated as
-"survives power loss if the controller cache is protected".
+alone, so the controller's cache is absorbing writes. Checked with `ssacli` (Review): the cache is
+battery-backed (1.8 GB, 90% for writes), no-battery write caching is off and the drive's own
+cache is off, so A and B survive power loss here. The volume is one 1 TB SAS disk in RAID 0: no
+redundancy, so a disk failure loses the journal, which only D (a standby elsewhere) covers. A run
+that writes faster than one disk drains would fill the cache and see `fdatasync` at disk speed;
+each benchmark run records how much it wrote.
 
 **Recovery.** Open the newest file, cut any torn tail, and replay every record into a new session
 whose sink discards writes (they went out before the crash) and whose store records sent
@@ -124,10 +127,6 @@ machine runs over loopback and states so: it measures the protocol, not a networ
   protocol's cost without a network (proposed); (b) left out until there is a second Linux
   machine.
 
-**For Shep to check:** whether the Smart Array controller's write cache is flash or battery backed
-and enabled (iLO, or `ssacli ctrl all show config detail`). It decides what A and B guarantee
-here.
-
 ## Spec
 
 - S1. Journal-before-release holds: in every crash-injection test, no MsgSeqNum the counterparty
@@ -160,3 +159,4 @@ here.
 | 2026-10-22 | Draft | Written for review. Storage examined first: `/` is ext4 on one Smart Array logical volume, write cache write-through as the kernel sees it; `fdatasync` probe p50 130 µs |
 | 2026-10-22 | Agreed | Approved by Shep, D1–D4 as proposed. On D2: the session has no clock of its own, so the engine calls `on_tick` often (perhaps every loop pass) to let its timers fire; almost every call finds nothing due and changes nothing. Only a tick that produced output or a disconnect is journaled, with its clock readings, so replay reproduces that message with the same MsgSeqNum and SendingTime; skipping the rest is safe because a tick that does nothing changes no state (every timer branch in the session writes or disconnects; S2 checks replay equality). Open: the Smart Array cache's protection, for A's and B's guarantee |
 | 2026-10-22 | Agreed | Controller cache checked by Shep in iLO: cache module OK, logical drive OK, Smart Storage Battery OK, so the Smart Array's write cache is flash-backed and protected, which with the 130 µs `fdatasync` means writes are absorbed there. Not yet seen: whether the physical drives' own (unprotected) write caches are disabled, and whether no-battery write caching is off (needs `ssacli`). Until then A and B are stated as surviving power loss with the controller cache protected and the drive caches unverified |
+| 2026-10-22 | Agreed | `ssacli` 6.45 (the package from HPE's noble pool, SHA-256 checked against its index; no repository added) on the P440ar, firmware 7.00: Cache Status OK, battery-backed cache 1.8 GB (10% read, 90% write), backup power Batteries, Battery/Capacitor Status OK, No-Battery Write Cache Disabled, Drive Write Cache Disabled (the drive, HP MM1000FBFVR SAS HDD, reports its write cache disabled). A and B therefore survive power loss on this machine. Logical drive 1: RAID 0 (Fault Tolerance 0) on that one disk; a disk failure loses the journal |
