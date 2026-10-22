@@ -97,7 +97,7 @@ public:
         std::memcpy(buf_ + pos_, t, tl);
         pos_ += tl;
         buf_[pos_++] = '=';
-        std::memcpy(buf_ + pos_, value.data(), value.size());
+        if (!value.empty()) std::memcpy(buf_ + pos_, value.data(), value.size());  // empty: data() may be null
         pos_ += value.size();
         buf_[pos_++] = soh;
     }
@@ -110,7 +110,7 @@ public:
     // Fields already encoded as "tag=value" SOH ..., appended as they are (a
     // body the caller built, note 003).
     void add_raw(std::string_view fields) noexcept {
-        if (!room(fields.size())) return;
+        if (fields.empty() || !room(fields.size())) return;
         std::memcpy(buf_ + pos_, fields.data(), fields.size());
         pos_ += fields.size();
     }

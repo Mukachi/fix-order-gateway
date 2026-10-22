@@ -1,6 +1,6 @@
 # 004 — Store and recovery
 
-**Status:** Agreed · **Updated:** 2026-10-22
+**Status:** Built (partial) · **Updated:** 2026-10-22
 
 ## Proposal
 
@@ -145,7 +145,7 @@ machine runs over loopback and states so: it measures the protocol, not a networ
 
 ## Tasks
 
-- [ ] Record format, writer, reader with torn-tail cut; S3
+- [x] Record format, writer, reader with torn-tail cut; S3
 - [ ] Held-output sink and the engine step (input, append, durable, release); store; replay
 - [ ] Strategies A, B, C; then D (standby process)
 - [ ] Fail points; crash tests in a child process; simulated power loss; S1, S2, S4
@@ -160,3 +160,4 @@ machine runs over loopback and states so: it measures the protocol, not a networ
 | 2026-10-22 | Agreed | Approved by Shep, D1–D4 as proposed. On D2: the session has no clock of its own, so the engine calls `on_tick` often (perhaps every loop pass) to let its timers fire; almost every call finds nothing due and changes nothing. Only a tick that produced output or a disconnect is journaled, with its clock readings, so replay reproduces that message with the same MsgSeqNum and SendingTime; skipping the rest is safe because a tick that does nothing changes no state (every timer branch in the session writes or disconnects; S2 checks replay equality). Open: the Smart Array cache's protection, for A's and B's guarantee |
 | 2026-10-22 | Agreed | Controller cache checked by Shep in iLO: cache module OK, logical drive OK, Smart Storage Battery OK, so the Smart Array's write cache is flash-backed and protected, which with the 130 µs `fdatasync` means writes are absorbed there. Not yet seen: whether the physical drives' own (unprotected) write caches are disabled, and whether no-battery write caching is off (needs `ssacli`). Until then A and B are stated as surviving power loss with the controller cache protected and the drive caches unverified |
 | 2026-10-22 | Agreed | `ssacli` 6.45 (the package from HPE's noble pool, SHA-256 checked against its index; no repository added) on the P440ar, firmware 7.00: Cache Status OK, battery-backed cache 1.8 GB (10% read, 90% write), backup power Batteries, Battery/Capacitor Status OK, No-Battery Write Cache Disabled, Drive Write Cache Disabled (the drive, HP MM1000FBFVR SAS HDD, reports its write cache disabled). A and B therefore survive power loss on this machine. Logical drive 1: RAID 0 (Fault Tolerance 0) on that one disk; a disk failure loses the journal |
+| 2026-10-22 | Built (partial) | `include/fixgw/journal.hpp`: the header (magic, epoch), the record (length, kind, both clocks, payload, CRC32C), `journal_file` (create, refusing an existing file; append after a cut), `journal_reader` (whole file read, records until the first short, oversized or CRC-failing one, `cut()` truncating to the last complete record and syncing). CRC32C by SSE4.2 on x86-64-v3, by the ARMv8 CRC instructions where the build enables them, otherwise by table (CI's arm64 build takes the table path); the hardware path equals the table at every length 0–280 and alignment 0–15, and both give the standard check value E3069283. `tests/journal_test.cpp`: every record kind read back exactly; S3 at each of the 106 lengths inside a last record with a payload; cut then append; a corrupted record and an oversized length stop the read; a wrong header refused. UBSan found `memcpy` given an empty view's null pointer (undefined even for 0 bytes) in the record encoder, and the same pattern in encoder B's `add` and `add_raw` (never hit by a test before); all three guarded. Clean under ASan and UBSan, without SSE4.2, and the aarch64 build compiles |
