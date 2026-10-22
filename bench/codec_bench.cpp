@@ -270,7 +270,15 @@ double core_ghz(double ticks_per_ns) {
     constexpr unsigned long long n = 20'000'000;
     unsigned long long x = 0;
     const ticks a = start();
-    for (unsigned long long i = 0; i < n; ++i) asm volatile("add $1, %0" : "+r"(x));
+    for (unsigned long long i = 0; i < n; ++i) {
+#if defined(__x86_64__)
+        asm volatile("add $1, %0" : "+r"(x));
+#elif defined(__aarch64__)
+        asm volatile("add %0, %0, #1" : "+r"(x));
+#else
+        x = x + 1;  // no one-cycle add guaranteed: the figure is then approximate
+#endif
+    }
     const ticks b = stop();
     return static_cast<double>(n) * ticks_per_ns / static_cast<double>(b - a);
 }

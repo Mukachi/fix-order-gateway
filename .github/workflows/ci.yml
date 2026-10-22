@@ -1,0 +1,47 @@
+# Build and test on every push and pull request, as lockfree-ipc does (its
+# note 009); recorded in note 001, Review 2026-10-22. No benchmark runs here,
+# and nothing writes to results/.
+name: ci
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x64,      runner: ubuntu-24.04,     kind: release }
+          - { name: x64-tsan, runner: ubuntu-24.04,     kind: tsan }
+          - { name: x64-asan, runner: ubuntu-24.04,     kind: asan }
+          - { name: arm64,    runner: ubuntu-24.04-arm, kind: release }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # TSan cannot map its shadow memory under the runner kernel's address
+      # randomisation; the setting is the host's, so it is made here.
+      - name: Address randomisation for TSan
+        if: matrix.kind == 'tsan'
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      # dev-lnx01's toolchain is the Ubuntu 26.04 archive's; the runner image is
+      # 24.04, so the suite runs in a 26.04 container. CMake fetches
+      # lockfree-ipc (public) at its pinned commit, hence git.
+      - name: Build and test (ubuntu:26.04)
+        run: |
+          docker run --rm -v "$PWD":/src -w /src ubuntu:26.04 sh -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends g++ cmake ninja-build python3 git binutils ca-certificates >/dev/null
+            git config --global --add safe.directory /src
+            ci/test.sh ${{ matrix.kind }}'
