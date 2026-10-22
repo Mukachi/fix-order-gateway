@@ -36,9 +36,10 @@ class ReportError(Exception):
     pass
 
 
-def harness(root):
-    """lockfree-ipc's run.py, from the fetched copy, as a module."""
-    path = root / "build" / "_deps" / "lockfree_ipc-src" / "run.py"
+def harness(root, lfipc=None):
+    """lockfree-ipc's run.py, from the fetched copy, as a module. `lfipc` is
+    where CMake fetched it (the test passes it); by default build/'s copy."""
+    path = (Path(lfipc) if lfipc else root / "build" / "_deps" / "lockfree_ipc-src") / "run.py"
     if not path.is_file():
         raise ReportError(f"{path} missing: configure the build first (cmake -S . -B build)")
     spec = importlib.util.spec_from_file_location("lfipc_run", path)
@@ -284,8 +285,8 @@ def readme_blocks(lf, sets, withheld):
             f"Full tables and conditions: [RESULTS.md](RESULTS.md).\n"}
 
 
-def report(root, check):
-    lf, lf_root = harness(root)
+def report(root, check, lfipc=None):
+    lf, lf_root = harness(root, lfipc)
     sets, withheld = load_sets(root, lf, lf_root)
     results = results_md(lf, sets, withheld)
     readme_path = root / "README.md"
@@ -323,9 +324,10 @@ def main():
     rp = sub.add_parser("report", help="generate RESULTS.md and README blocks from published JSON")
     rp.add_argument("--check", action="store_true", help="compare only; exit 1 on any difference")
     rp.add_argument("--root", type=Path, default=Path(__file__).resolve().parent, help=argparse.SUPPRESS)
+    rp.add_argument("--lockfree-ipc", dest="lfipc", help="the fetched lockfree-ipc (default: build/_deps/lockfree_ipc-src)")
     args = ap.parse_args()
     try:
-        return report(args.root, args.check)
+        return report(args.root, args.check, args.lfipc)
     except ReportError as e:
         print(f"report: {e}", file=sys.stderr)
         return 1

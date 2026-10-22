@@ -94,5 +94,6 @@ target_compile_definitions(codec_bench PRIVATE LFIPC_RESULTS_DIR="${CMAKE_SOURCE
 
 # One number everywhere: a stale RESULTS.md or README figure fails the suite.
 if(Python3_FOUND)
-  add_test(NAME report_check COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/run.py report --check)
+  add_test(NAME report_check COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/run.py report --check
+                                    --lockfree-ipc ${lockfree_ipc_SOURCE_DIR})
 endif()
