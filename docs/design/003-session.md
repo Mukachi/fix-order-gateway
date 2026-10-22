@@ -1,6 +1,6 @@
 # 003 — Session
 
-**Status:** Draft · **Updated:** 2026-10-22
+**Status:** Agreed · **Updated:** 2026-10-22
 
 ## Proposal
 
@@ -186,3 +186,4 @@ same outputs, byte for byte, which is what recovery by replay (note 004) depends
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-22 | Draft | Written for review. Sources: FIX 4.4 Volume 2; *FIX Session Layer Technical Standard* (2020 errata); *FIX Session Layer Test Cases* V1.0 (June 2020), its scenario list read from a published HTML copy (FIXT 1.1 numbering; FIX 4.4's differs only in version-specific reject reasons), to be checked against the official document in note 006. Message recovery: only Reject among the admin messages is resent; the rest are gap-filled |
+| 2026-10-22 | Agreed | Approved by Shep, all four decisions as proposed: D1 drop a message above a gap and request from the gap to 0; D2 the session queues application messages unnumbered while not logged on (bounded) and numbers them when sent, after the stale-order hook; D3 a sink as a template parameter; D4 ResetSeqNumFlag supported both ways |
