@@ -11,6 +11,12 @@ the same rules. Only files listed in results/published.toml are read, each
 validated first: environment checker, published, bench mode, clean build, its
 component's block present, one commit, machine and kernel command line per
 set. Figures are min-max over a set's runs. Standard library only.
+
+Runs measured as episodes (note 009, amendment of 2026-10-22) are published
+per predictor state: each case's states from every run are grouped across the
+set by mispredictions per message (the benchmark's own split rule), and each
+state's p50 must agree across runs within 3% (S8) unless the manifest lists the
+case under `withheld`.
 """
 import argparse
 import importlib.util
@@ -79,7 +85,35 @@ def load_sets(root, lf, lf_root):
     unknown = set(m) - set(SETS)
     if unknown:
         raise ReportError(f"published.toml: unknown sets {sorted(unknown)}")
-    return {n: (m[n].get("note", ""), validate(root, lf, lf_root, n, m[n]["runs"])) for n in SETS if n in m}
+    sets = {n: (m[n].get("note", ""), validate(root, lf, lf_root, n, m[n]["runs"])) for n in SETS if n in m}
+    withheld = {n: set(m[n].get("withheld", [])) for n in SETS if n in m}
+    return sets, withheld
+
+
+def by_state(entries, what):
+    """Group (run, state) entries across a set's runs into predictor states, by
+    mispredictions per message, with the benchmark's split rule (at least 1.5x
+    and 0.5 apart). Returns [(name, entries)], fewest mispredictions first."""
+    key = lambda e: e[1]["mispredictions_per_message"]
+    entries = sorted(entries, key=key)
+    groups = [[entries[0]]]
+    for prev, cur in zip(entries, entries[1:]):
+        if key(cur) - key(prev) >= 0.5 and key(cur) >= 1.5 * key(prev):
+            groups.append([])
+        groups[-1].append(cur)
+    if len(groups) > 2:
+        raise ReportError(f"{what}: {len(groups)} predictor states across the set's runs")
+    for g in groups:
+        if len({r for r, _ in g}) < len(g):
+            raise ReportError(f"{what}: one run has two states that the set groups as one")
+    names = ["one"] if len(groups) == 1 else ["fast", "slow"]
+    return list(zip(names, groups))
+
+
+def agree(what, name, p50s, withheld):
+    if len(p50s) > 1 and max(p50s) > 1.03 * min(p50s) and not withheld:
+        raise ReportError(f"{what}: {name} state p50 {min(p50s):.1f}-{max(p50s):.1f} ns across runs, more than 3% "
+                          f"apart (S8): withhold the case in published.toml and record why in note 009")
 
 
 PATHS = ("a", "scalar", "simd", "simd_padded", "index")
@@ -89,6 +123,78 @@ CASE_ORDER = (("none",)
               + ("encode_a_nos", "encode_b_nos", "encode_c_nos")
               # Note 002's runs, before the paths were split (B is the scalar path).
               + ("decode_b_nos", "decode_b_er", "decode_b_hb"))
+
+
+def is_episodes(runs):
+    return "states" in runs[0][1]["codec"]["cases"]["none"]
+
+
+def state_rows(lf, runs, withheld):
+    rows = []
+    n = len(runs)
+    for k in CASE_ORDER:
+        present = [(i, d["codec"]["cases"][k]) for i, (_, d) in enumerate(runs) if k in d["codec"]["cases"]]
+        if not present:
+            continue
+        c = present[0][1]
+        held = k in withheld
+        for name, g in by_state([(i, st) for i, cs in present for st in cs["states"]], k):
+            sts = [st for _, st in g]
+            agree(k, name, [st["p50_ns"] for st in sts], held)
+            shares = [next((st["share"] for r, st in g if r == i), 0.0) for i in range(n)]
+            figures = (["withheld (note 009)", "–", "–", "–"] if held else
+                       [lf.rng([st[f] for st in sts]) for f in ("p50_ns", "p99_ns", "p999_ns", "max_ns")])
+            rows.append([c["operation"], c["message"], c["representation"], c["bytes"] or "–", name,
+                         lf.rng([st["mispredictions_per_message"] for st in sts], lambda v: f"{v:.2f}"),
+                         lf.rng(shares, lambda v: f"{100 * v:.0f}%")] + figures)
+    return rows
+
+
+def state_throughput_rows(lf, runs):
+    t = [d["codec"]["throughput"] for _, d in runs]
+    rows = []
+    for path in t[0]["paths"]:
+        entries = [(i, st) for i, x in enumerate(t) for st in x["paths"][path]["states"]]
+        for name, g in by_state(entries, f"throughput {path}"):
+            sts = [st for _, st in g]
+            rows.append([path, name, lf.rng([st["mispredictions_per_message"] for st in sts], lambda v: f"{v:.2f}"),
+                         sum(st["repeats"] for st in sts),
+                         lf.rng([st["p50_per_s"] / 1e6 for st in sts], lambda v: f"{v:.2f}"),
+                         f"{min(st['min_per_s'] for st in sts) / 1e6:.2f}",
+                         f"{max(st['max_per_s'] for st in sts) / 1e6:.2f}"])
+    return t[0], rows
+
+
+def state_section(lf, note, runs, withheld):
+    c0 = runs[0][1]["codec"]
+    t0, trows = state_throughput_rows(lf, runs)
+    ghz = [x for _, d in runs for x in (d["codec"]["core_ghz_start"], d["codec"]["core_ghz_end"])]
+    return [f"## Codec (note {note})", "",
+            f"Per call, timed between `start()` and `stop()` and not subtracted: the first row is the empty "
+            f"window, the clock's own cost. CPU {c0['cpu']}, core clock {min(ghz):.2f}–{max(ghz):.2f} GHz (measured at "
+            f"each run's start and end); {c0['inputs']:,} different messages visited in a random order, each in its "
+            f"own 512-byte slot. Each case runs as {c0['episodes']} episodes of {c0['messages_per_episode']:,} "
+            f"timed calls ({c0['warmup_per_episode']:,} warm-up discarded per episode), each after the same fixed "
+            f"work ({c0['prior_work']}). On this CPU the branch predictor has two stable states for the decode "
+            f"code, and the work run just before decoding sets which one an episode gets (note 009): episodes are "
+            f"classified by their counted branch mispredictions per message, and results are given per state, "
+            f"never pooled. The share of episodes in each state is as observed and is not reproducible: it "
+            f"drifts with conditions outside the code. Decoding: A, fields copied into a hash map (the "
+            f"conventional design, the baseline, note 002); scalar, views over the buffer found a byte at a time; "
+            f"SIMD, the same with SOH found 32 bytes at a time and a 32-byte CheckSum; SIMD padded, the same on a "
+            f"buffer with 64 bytes of padding; two-stage, bitmaps of '=' and SOH built first, here per message "
+            f"(note 009). Encoding (note 002): A, fields as strings in a vector; B, appended to a fixed buffer; C, "
+            f"a pre-encoded NewOrderSingle with fixed-width slots; each formats the timestamp and ClOrdID per "
+            f"order. Harness: lockfree-ipc `{c0['lockfree_ipc_commit'][:7]}`.", "",
+            lf.table(["Operation", "Message", "Path", "Bytes", "State", "Mispred./msg", "Share", "p50", "p99",
+                      "p99.9", "max"], state_rows(lf, runs, withheld)),
+            "",
+            f"Throughput, {t0['operation']}, {t0['messages']:,} messages (a random sequence of the inputs) in "
+            f"batches of whole messages up to {t0['batch_bytes']:,} bytes (two-stage indexes each batch inside the "
+            f"timing), 21 repeats per run, each after the same fixed work, classified by state as above; million "
+            f"messages per second:", "",
+            lf.table(["Path", "State", "Mispred./msg", "Repeats", "Median", "Slowest repeat", "Fastest repeat"],
+                     trows), ""]
 
 
 def codec_rows(lf, runs):
@@ -142,7 +248,7 @@ def codec_section(lf, note, runs):
             lf.table(["Path", "Median", "Slowest repeat", "Fastest repeat"], trows), ""]
 
 
-def results_md(lf, sets):
+def results_md(lf, sets, withheld):
     lines = ["# Results", "",
              "Generated by `python run.py report` from the runs listed in `results/published.toml`. "
              "Do not edit: `python run.py report --check` fails if this file and the JSON disagree. "
@@ -153,14 +259,22 @@ def results_md(lf, sets):
     for name in SETS:
         if name in sets:
             note, runs = sets[name]
-            lines += codec_section(lf, note, runs)
+            lines += (state_section(lf, note, runs, withheld[name]) if is_episodes(runs)
+                      else codec_section(lf, note, runs))
     return "\n".join(lines).rstrip() + "\n"
 
 
-def readme_blocks(lf, sets):
+def readme_blocks(lf, sets, withheld):
     if "codec" not in sets:
         return {"codec-summary": "Codec figures: not yet measured (design note 002).\n"}
     runs = sets["codec"][1]
+    if is_episodes(runs):
+        rows = [r for r in state_rows(lf, runs, withheld["codec"]) if r[1] == "NewOrderSingle" and r[0] != "frame"]
+        return {"codec-summary": lf.table(["Operation", "Message", "Repr.", "Bytes", "State", "Mispred./msg", "Share",
+                                           "p50", "p99", "p99.9", "max"], rows) +
+                f"\n\nNs per call, range over {len(runs)} runs, clock cost included (about the empty window's p50). "
+                f"The branch predictor has two stable states for this code; figures are per state, and the share "
+                f"of each is not reproducible (note 009). Full tables and conditions: [RESULTS.md](RESULTS.md).\n"}
     rows = [r for r in codec_rows(lf, runs) if r[1] == "NewOrderSingle" and r[0] != "frame"]
     return {"codec-summary": lf.table(["Operation", "Message", "Repr.", "Bytes", "p50", "p99", "p99.9", "max"], rows) +
             f"\n\nNs per call, range over {len(runs)} runs, clock cost included (about the empty window's p50). "
@@ -169,11 +283,11 @@ def readme_blocks(lf, sets):
 
 def report(root, check):
     lf, lf_root = harness(root)
-    sets = load_sets(root, lf, lf_root)
-    results = results_md(lf, sets)
+    sets, withheld = load_sets(root, lf, lf_root)
+    results = results_md(lf, sets, withheld)
     readme_path = root / "README.md"
     readme = readme_path.read_text()
-    blocks = readme_blocks(lf, sets)
+    blocks = readme_blocks(lf, sets, withheld)
     found = {m["name"] for m in BLOCK.finditer(readme)}
     if set(blocks) - found:
         raise ReportError(f"README.md has no block for {sorted(set(blocks) - found)}")

@@ -7,7 +7,10 @@
 // machine is in bench mode and the build is clean (lockfree-ipc note 004).
 // Method as lockfree-ipc's record cost: each call timed between start() and
 // stop(), unsubtracted, beside an empty window ("none") for the clock's own
-// cost; CPU 2; 1,024 different messages visited in a random order.
+// cost; CPU 2; 1,024 different messages visited in a random order. Each case
+// runs as episodes, each after the same fixed prior work, classified by the
+// branch mispredictions counted in it into the predictor's states, and
+// published per state (note 009, amendment of 2026-10-22).
 #include "representation_a.hpp"
 
 #include <fixgw/decode.hpp>
@@ -24,9 +27,14 @@
 #include <cstring>
 #include <memory>
 #include <cstdio>
+#include <numeric>
 #include <random>
 #include <string>
 #include <vector>
+
+#include <linux/perf_event.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 namespace {
 
@@ -34,7 +42,10 @@ using namespace lfipc::bench;
 namespace fx = fixgw;
 
 constexpr int cpu = 2;
-constexpr std::size_t inputs = 1024, samples = 1'000'000, warmup = 100'000;
+constexpr std::size_t inputs = 1024, samples = 1'000'000, warmup = 100'000;  // the visit order's length
+// Each case: `episodes` episodes, each the prior work, then `episode_warmup`
+// discarded and `episode_messages` timed calls (note 009, amendment).
+constexpr std::size_t episodes = 200, episode_messages = 50'000, episode_warmup = 1'000;
 constexpr std::int64_t base_ms = 1'792'567'800'000;  // 2026-10-21 07:30:00 UTC
 
 template <typename T>
@@ -103,22 +114,147 @@ const std::vector<std::uint32_t>& visit_order() {
     return order;
 }
 
-// Per-call cost of op(j), j in the random visit order.
-template <typename Op>
-overhead time_op(Op&& op) {
-    std::vector<ticks> deltas(samples);
-    const auto& order = visit_order();
-    for (std::size_t i = 0; i < warmup + samples; ++i) {
-        const std::size_t j = order[i];
-        const ticks a = start();
-        op(j);
-        const ticks b = stop();
-        if (i >= warmup) deltas[i - warmup] = b - a;
+// This thread's branch mispredictions, user space only, read outside the timing
+// windows. Needs perf_event_paranoid 2 or lower (bench-on sets it).
+class branch_misses {
+public:
+    branch_misses() {
+        perf_event_attr a{};
+        a.type = PERF_TYPE_HARDWARE;
+        a.size = sizeof(a);
+        a.config = PERF_COUNT_HW_BRANCH_MISSES;
+        a.exclude_kernel = 1;
+        a.exclude_hv = 1;
+        fd_ = static_cast<int>(syscall(SYS_perf_event_open, &a, 0, -1, -1, 0));
     }
-    auto o = summarise_overhead(std::move(deltas));
-    o.warmup_discarded = warmup;
-    o.cpu = cpu;
-    return o;
+    ~branch_misses() {
+        if (fd_ >= 0) close(fd_);
+    }
+    branch_misses(const branch_misses&) = delete;
+    branch_misses& operator=(const branch_misses&) = delete;
+    bool ok() const { return fd_ >= 0; }
+    std::uint64_t read() const {
+        std::uint64_t v = 0;
+        if (::read(fd_, &v, sizeof(v)) != sizeof(v)) v = 0;
+        return v;
+    }
+
+private:
+    int fd_ = -1;
+};
+
+// The fixed work before every episode: sorting 1,000,000 timing-like values
+// (600-663 with a thin tail, fixed seed). Sorting the harness's own timings
+// between cases was found to set the branch predictor's state for the decode
+// code; these values set it as often, random ones less (note 009, Review).
+struct prior_work {
+    std::vector<std::uint64_t> values, work;
+    prior_work() : values(1'000'000), work(1'000'000) {
+        std::mt19937_64 r(6);
+        for (auto& x : values) {
+            x = 600 + r() % 64;
+            if (r() % 100 == 0) x += r() % 2000;
+        }
+    }
+    void run() {
+        std::copy(values.begin(), values.end(), work.begin());
+        std::sort(work.begin(), work.end());
+        keep(work[work.size() / 2]);
+    }
+};
+
+// Where sorted mispredictions per message split into two states: the largest
+// ratio between neighbours, if at least 1.5x and 0.5 apart (so a case with
+// almost none, like the empty window, stays one state). 0: one state.
+std::size_t split_at(const std::vector<double>& sorted) {
+    double best = 1.0;
+    std::size_t at = 0;
+    for (std::size_t i = 1; i < sorted.size(); ++i) {
+        const double lo = sorted[i - 1], hi = sorted[i];
+        if (hi - lo < 0.5 || hi < 1.5 * lo) continue;
+        const double r = lo > 0 ? hi / lo : 1e9;
+        if (r > best) best = r, at = i;
+    }
+    return at;
+}
+
+// Index groups of items ordered by `key`, split into states by split_at.
+std::vector<std::vector<std::size_t>> states_of(const std::vector<double>& key) {
+    std::vector<std::size_t> idx(key.size());
+    std::iota(idx.begin(), idx.end(), std::size_t{0});
+    std::sort(idx.begin(), idx.end(), [&](std::size_t a, std::size_t b) { return key[a] < key[b]; });
+    std::vector<double> sorted;
+    for (const auto i : idx) sorted.push_back(key[i]);
+    const std::size_t at = split_at(sorted);
+    if (at == 0) return {idx};
+    return {{idx.begin(), idx.begin() + static_cast<std::ptrdiff_t>(at)},
+            {idx.begin() + static_cast<std::ptrdiff_t>(at), idx.end()}};
+}
+
+double median_of(std::vector<double> v) {
+    std::sort(v.begin(), v.end());
+    return v.empty() ? 0 : v[v.size() / 2];
+}
+
+struct state {
+    std::size_t episodes = 0;
+    double mispredictions_per_message = 0;
+    overhead cost;
+};
+struct measured {
+    std::vector<state> states;  // fewest mispredictions first
+    std::vector<double> episode_mispredictions;
+};
+
+// Per-call cost of op(j), j continuing through the random visit order, as
+// `episodes` episodes after the prior work; `d` holds every timed call.
+template <typename Op>
+measured run_episodes(Op&& op, const branch_misses& bm, prior_work& prior, std::vector<ticks>& d) {
+    const auto& order = visit_order();
+    measured m;
+    m.episode_mispredictions.resize(episodes);
+    std::size_t pos = 0;
+    for (std::size_t e = 0; e < episodes; ++e) {
+        prior.run();
+        const auto m0 = bm.read();
+        for (std::size_t i = 0; i < episode_warmup + episode_messages; ++i) {
+            const std::size_t j = order[pos++ % order.size()];
+            const ticks a = start();
+            op(j);
+            const ticks b = stop();
+            if (i >= episode_warmup) d[e * episode_messages + i - episode_warmup] = b - a;
+        }
+        const auto m1 = bm.read();
+        m.episode_mispredictions[e] = static_cast<double>(m1 - m0) / (episode_warmup + episode_messages);
+    }
+    for (const auto& group : states_of(m.episode_mispredictions)) {
+        std::vector<ticks> pooled;
+        pooled.reserve(group.size() * episode_messages);
+        std::vector<double> mis;
+        for (const auto e : group) {
+            const auto from = d.begin() + static_cast<std::ptrdiff_t>(e * episode_messages);
+            pooled.insert(pooled.end(), from, from + static_cast<std::ptrdiff_t>(episode_messages));
+            mis.push_back(m.episode_mispredictions[e]);
+        }
+        state st;
+        st.episodes = group.size();
+        st.mispredictions_per_message = median_of(mis);
+        st.cost = summarise_overhead(std::move(pooled));
+        st.cost.warmup_discarded = group.size() * episode_warmup;
+        st.cost.cpu = cpu;
+        m.states.push_back(st);
+    }
+    return m;
+}
+
+// The core clock in GHz: a chain of dependent adds retires one per cycle.
+double core_ghz(double ticks_per_ns) {
+    constexpr unsigned long long n = 20'000'000;
+    unsigned long long x = 0;
+    const ticks a = start();
+    for (unsigned long long i = 0; i < n; ++i) asm volatile("add $1, %0" : "+r"(x));
+    const ticks b = stop();
+    return static_cast<double>(n) * ticks_per_ns / static_cast<double>(b - a);
 }
 
 struct order_values {
@@ -289,7 +425,7 @@ std::string varied_heartbeat(variety& v, std::uint64_t seq, std::int64_t ms) {
 struct result {
     std::string name, representation, operation, message;
     std::size_t bytes;
-    overhead cost;
+    measured cost;
 };
 
 }  // namespace
@@ -305,6 +441,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "codec_bench: refused: %s\n", clk.ok ? "cannot pin to CPU 2" : clk.reason.c_str());
         return run.finish(false, "codec_bench");
     }
+    const branch_misses bm;
+    if (!bm.ok()) {
+        write_clock_block(run.w, clk);
+        std::fprintf(stderr, "codec_bench: refused: cannot count branch mispredictions (perf_event_paranoid must "
+                             "be 2 or lower; bench-on sets it)\n");
+        return run.finish(false, "codec_bench");
+    }
+    const double ghz_start = core_ghz(clk.cal.ticks_per_ns);
+    prior_work prior;
+    std::vector<ticks> timed(episodes * episode_messages);  // every timed call of a case, allocated once
+    const auto measure = [&](auto&& op) { return run_episodes(op, bm, prior, timed); };
 
     // Inputs, built before timing. Each message sits at the start of its own
     // 512-byte slot, so every path reads it from the same kind of place and the
@@ -338,7 +485,7 @@ int main(int argc, char** argv) {
     std::unordered_map<std::uint32_t, std::string> map;
     map.reserve(64);
 
-    out.push_back({"none", "-", "empty window: start(); stop()", "-", 0, time_op([](std::size_t) {})});
+    out.push_back({"none", "-", "empty window: start(); stop()", "-", 0, measure([](std::size_t) {})});
     // Frame and decode, per path.
     const auto path = [&](auto op) {
         return [&, op](const slots& m) {
@@ -366,33 +513,33 @@ int main(int argc, char** argv) {
     for (const auto& msg : messages) {
         const std::size_t bytes = msg.m->length[0];
         const std::string t = msg.tag;
-        out.push_back({"frame_scalar_" + t, "scalar", "frame", msg.name, bytes, time_op([&](std::size_t j) {
+        out.push_back({"frame_scalar_" + t, "scalar", "frame", msg.name, bytes, measure([&](std::size_t j) {
                            const auto f = op_frame_scalar(msg.m->at(j), msg.m->length[j]);
                            keep(f);
                        })});
-        out.push_back({"frame_simd_" + t, "SIMD", "frame", msg.name, bytes, time_op([&](std::size_t j) {
+        out.push_back({"frame_simd_" + t, "SIMD", "frame", msg.name, bytes, measure([&](std::size_t j) {
                            const auto f = op_frame_simd(msg.m->at(j), msg.m->length[j]);
                            keep(f);
                        })});
-        out.push_back({"decode_a_" + t, "A", "frame and decode", msg.name, bytes, time_op(rep_a(*msg.m))});
-        out.push_back({"decode_scalar_" + t, "scalar", "frame and decode", msg.name, bytes, time_op(scalar(*msg.m))});
-        out.push_back({"decode_simd_" + t, "SIMD", "frame and decode", msg.name, bytes, time_op(simd(*msg.m))});
+        out.push_back({"decode_a_" + t, "A", "frame and decode", msg.name, bytes, measure(rep_a(*msg.m))});
+        out.push_back({"decode_scalar_" + t, "scalar", "frame and decode", msg.name, bytes, measure(scalar(*msg.m))});
+        out.push_back({"decode_simd_" + t, "SIMD", "frame and decode", msg.name, bytes, measure(simd(*msg.m))});
         out.push_back({"decode_simd_padded_" + t, "SIMD, padded", "frame and decode", msg.name, bytes,
-                       time_op(simd_padded(*msg.m))});
-        out.push_back({"decode_index_" + t, "two-stage", "frame and decode", msg.name, bytes, time_op(indexed(*msg.m))});
+                       measure(simd_padded(*msg.m))});
+        out.push_back({"decode_index_" + t, "two-stage", "frame and decode", msg.name, bytes, measure(indexed(*msg.m))});
     }
 
-    out.push_back({"encode_a_nos", "A", "encode", "NewOrderSingle", nos.length[0], time_op([&](std::size_t j) {
+    out.push_back({"encode_a_nos", "A", "encode", "NewOrderSingle", nos.length[0], measure([&](std::size_t j) {
                        const std::string s = encode_a(orders[j]);
                        keep(s);
                    })});
-    out.push_back({"encode_b_nos", "B", "encode", "NewOrderSingle", nos.length[0], time_op([&](std::size_t j) {
+    out.push_back({"encode_b_nos", "B", "encode", "NewOrderSingle", nos.length[0], measure([&](std::size_t j) {
                        const auto s = encode_b(scratch, sizeof(scratch), orders[j]);
                        keep(s);
                    })});
     fx::new_order_template tmpl({"CLIENT", "VENUE", "ACC1", "VOD.L", '1', '2', '0', 2});
     const std::size_t c_bytes = tmpl.fill(1, base_ms, 1, 1, 1).size();
-    out.push_back({"encode_c_nos", "C", "encode", "NewOrderSingle", c_bytes, time_op([&](std::size_t j) {
+    out.push_back({"encode_c_nos", "C", "encode", "NewOrderSingle", c_bytes, measure([&](std::size_t j) {
                        const auto s = op_encode_c(tmpl, orders[j]);
                        keep(s);
                    })});
@@ -433,12 +580,14 @@ int main(int argc, char** argv) {
     auto batch_ix = std::make_unique<fx::structural_index<batch_bytes / 64 + 1>>();
     struct path_throughput {
         const char* name;
-        std::vector<double> per_second;
+        std::vector<double> per_second, mispredictions;  // per repeat
     };
     std::vector<path_throughput> through;
     const auto burst = [&](const char* name, auto&& decode_one, bool index_first) {
-        path_throughput t{name, {}};
+        path_throughput t{name, {}, {}};
         for (int rep = 0; rep < 21; ++rep) {
+            prior.run();
+            const auto m0 = bm.read();
             const ticks a = start();
             std::size_t at = 0, n = 0;
             for (const std::size_t end : batch_end) {
@@ -453,10 +602,12 @@ int main(int argc, char** argv) {
                 }
             }
             const ticks b = stop();
-            if (n == stream_messages)
+            const auto m1 = bm.read();
+            if (n == stream_messages) {
                 t.per_second.push_back(static_cast<double>(n) * clk.cal.ticks_per_ns * 1e9 / static_cast<double>(b - a));
+                t.mispredictions.push_back(static_cast<double>(m1 - m0) / static_cast<double>(n));
+            }
         }
-        std::sort(t.per_second.begin(), t.per_second.end());
         through.push_back(std::move(t));
     };
     burst("scalar", [&](std::size_t, std::size_t at, std::size_t len) { return op_only_scalar(stream.data() + at, len, view); }, false);
@@ -466,6 +617,7 @@ int main(int argc, char** argv) {
     burst("two-stage", [&](std::size_t base, std::size_t at, std::size_t len) {
         return op_only_indexed(stream.data() + base, *batch_ix, at - base, len, view); }, true);
 
+    const double ghz_end = core_ghz(clk.cal.ticks_per_ns);
     write_noise_block(run.w, noise, clk.cal.ticks_per_ns);
     write_clock_block(run.w, clk);
     const auto ns = [&](ticks t) { return static_cast<double>(t) / clk.cal.ticks_per_ns; };
@@ -474,6 +626,13 @@ int main(int argc, char** argv) {
     run.w.member("cpu", cpu);
     run.w.member("inputs", inputs);
     run.w.member("lockfree_ipc_commit", FIXGW_LFIPC_COMMIT);
+    run.w.member("core_ghz_start", ghz_start);
+    run.w.member("core_ghz_end", ghz_end);
+    run.w.member("prior_work", "sort of 1,000,000 timing-like values, before every episode and burst repeat");
+    run.w.member("counter", "branch mispredictions, user space, this thread");
+    run.w.member("episodes", episodes);
+    run.w.member("messages_per_episode", episode_messages);
+    run.w.member("warmup_per_episode", episode_warmup);
     run.w.key("cases");
     run.w.begin_object();
     for (const auto& r : out) {
@@ -483,16 +642,31 @@ int main(int argc, char** argv) {
         run.w.member("operation", r.operation);
         run.w.member("message", r.message);
         run.w.member("bytes", r.bytes);
-        run.w.member("samples", r.cost.samples);
-        run.w.member("warmup_discarded", r.cost.warmup_discarded);
-        run.w.member("p50_ns", ns(r.cost.p50));
-        run.w.member("p99_ns", ns(r.cost.p99));
-        run.w.member("p999_ns", ns(r.cost.p999));
-        run.w.member("max_ns", ns(r.cost.max));
+        run.w.key("states");
+        run.w.begin_array();
+        for (const auto& st : r.cost.states) {
+            run.w.begin_object();
+            run.w.member("episodes", st.episodes);
+            run.w.member("share", static_cast<double>(st.episodes) / episodes);
+            run.w.member("mispredictions_per_message", st.mispredictions_per_message);
+            run.w.member("samples", st.cost.samples);
+            run.w.member("warmup_discarded", st.cost.warmup_discarded);
+            run.w.member("p50_ns", ns(st.cost.p50));
+            run.w.member("p99_ns", ns(st.cost.p99));
+            run.w.member("p999_ns", ns(st.cost.p999));
+            run.w.member("max_ns", ns(st.cost.max));
+            run.w.end_object();
+            std::printf("%-26s %-13s %-16s %4zu B: %3zu episodes, %5.2f mispred./msg: p50 %6.1f p99 %6.1f p99.9 %6.1f "
+                        "max %8.1f ns\n", r.name.c_str(), r.representation.c_str(), r.message.c_str(), r.bytes,
+                        st.episodes, st.mispredictions_per_message, ns(st.cost.p50), ns(st.cost.p99),
+                        ns(st.cost.p999), ns(st.cost.max));
+        }
+        run.w.end_array();
+        run.w.key("episode_mispredictions_per_message");
+        run.w.begin_array();
+        for (const double v : r.cost.episode_mispredictions) run.w.value(v);
+        run.w.end_array();
         run.w.end_object();
-        std::printf("%-26s %-13s %-17s %-16s %4zu B: p50 %6.1f p99 %6.1f p99.9 %6.1f max %8.1f ns\n", r.name.c_str(),
-                    r.representation.c_str(), r.operation.c_str(), r.message.c_str(), r.bytes, ns(r.cost.p50),
-                    ns(r.cost.p99), ns(r.cost.p999), ns(r.cost.max));
     }
     run.w.end_object();
     run.w.key("throughput");
@@ -506,14 +680,23 @@ int main(int argc, char** argv) {
         run.w.key(t.name);
         run.w.begin_object();
         run.w.member("repeats", t.per_second.size());
-        if (!t.per_second.empty()) {
-            run.w.member("min_per_s", t.per_second.front());
-            run.w.member("p50_per_s", t.per_second[t.per_second.size() / 2]);
-            run.w.member("max_per_s", t.per_second.back());
-            std::printf("throughput %-13s p50 %.2fM messages/s (min %.2fM, max %.2fM)\n", t.name,
-                        t.per_second[t.per_second.size() / 2] / 1e6, t.per_second.front() / 1e6,
-                        t.per_second.back() / 1e6);
+        run.w.key("states");
+        run.w.begin_array();
+        for (const auto& group : states_of(t.mispredictions)) {
+            std::vector<double> ps, mis;
+            for (const auto i : group) ps.push_back(t.per_second[i]), mis.push_back(t.mispredictions[i]);
+            std::sort(ps.begin(), ps.end());
+            run.w.begin_object();
+            run.w.member("repeats", ps.size());
+            run.w.member("mispredictions_per_message", median_of(mis));
+            run.w.member("min_per_s", ps.front());
+            run.w.member("p50_per_s", ps[ps.size() / 2]);
+            run.w.member("max_per_s", ps.back());
+            run.w.end_object();
+            std::printf("throughput %-13s %2zu repeats, %5.2f mispred./msg: p50 %.2fM messages/s (min %.2fM, max %.2fM)\n",
+                        t.name, ps.size(), median_of(mis), ps[ps.size() / 2] / 1e6, ps.front() / 1e6, ps.back() / 1e6);
         }
+        run.w.end_array();
         run.w.end_object();
     }
     run.w.end_object();  // paths
