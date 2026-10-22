@@ -7,6 +7,12 @@ The framers and the template encoder (C) make no call at all; the decoders
 Encoder B may call memcpy (copying values of variable length) and
 __stack_chk_fail (the stack protector's abort), nothing else: no allocation,
 no system call. No subject contains a syscall instruction.
+
+The session (note 003, S6) is checked with everything it reaches: every
+function called from the inbound and send subjects, transitively, may call
+only memory copies, comparisons and searches (strlen included) and the stack
+protector's abort,
+never through a pointer, and contains no syscall instruction.
 """
 import re
 import subprocess
@@ -25,6 +31,13 @@ SUBJECTS = {
     "fixgw_encode_c": set(),
     "fixgw_encode_b": {"memcpy@plt", "__stack_chk_fail@plt"},
 }
+
+# Note 003: checked with everything they call.
+REACHING = {"fixgw_session_inbound", "fixgw_session_send"}
+# __memcpy_chk: memcpy with a bounds check (_FORTIFY_SOURCE, Ubuntu's default);
+# strlen: a reason given as a C string (the codec's `why`) made a string_view.
+MEMORY = {"memcpy@plt", "__memcpy_chk@plt", "memmove@plt", "memchr@plt", "memcmp@plt", "strlen@plt",
+          "__stack_chk_fail@plt"}
 
 failures = 0
 
@@ -62,6 +75,37 @@ for subject, allowed in SUBJECTS.items():
     check(not extra and not indirect and not sys_ins,
           f"S6 {subject}: {len(ins)} instructions, calls only {sorted(allowed) or 'none'}"
           + (f": found {extra + indirect + sys_ins}" if extra or indirect or sys_ins else ""))
+
+def calls(ins):
+    direct = {re.search(r"<([^>]*)>", o)[1] for mnem, o in ins
+              if (mnem.startswith("call") or mnem.startswith("jmp")) and "<" in o}
+    direct = {t.split("+")[0] for t in direct}
+    indirect = [o for mnem, o in ins if mnem.startswith("call") and "<" not in o]
+    return direct, indirect
+
+
+for subject in sorted(REACHING):
+    if subject not in funcs:
+        check(False, f"{subject} found")
+        continue
+    seen, todo, bad = set(), [subject], []
+    while todo:
+        f = todo.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        direct, indirect = calls(funcs[f])
+        bad += [f"{f}: indirect call {o}" for o in indirect]
+        bad += [f"{f}: {m}" for m, _ in funcs[f] if m in ("syscall", "sysenter", "int")]
+        for t in direct:
+            if t.endswith("@plt"):
+                if t not in MEMORY:
+                    bad.append(f"{f}: calls {t}")
+            elif t in funcs and t != f:
+                todo.append(t)
+    size = sum(len(funcs[f]) for f in seen)
+    check(not bad, f"S6 (note 003) {subject}: {len(seen)} functions, {size} instructions, calls only "
+                   f"memory functions and the stack protector" + (f": found {bad[:5]}" if bad else ""))
 
 print("FAILED" if failures else "all passed")
 sys.exit(1 if failures else 0)
