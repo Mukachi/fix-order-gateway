@@ -75,8 +75,8 @@ struct crashing {
         if (pl.hit(point::mid_append)) {  // half a record reaches the file, then death
             char buf[journal_format::record_overhead + 4096];
             const std::size_t n = encode_record(buf, k, t, a.substr(0, 2048), b.substr(0, 2000));
-            const int fd = ::open(path.c_str(), O_WRONLY | O_APPEND);
-            if (::write(fd, buf, n / 2) < 0) ::_exit(10);
+            const int fd = ::open(path.c_str(), O_WRONLY);
+            if (::pwrite(fd, buf, n / 2, static_cast<off_t>(in.end())) < 0) ::_exit(10);
             ::_exit(9);
         }
         const bool ok = in.append(k, t, a, b);
@@ -85,9 +85,8 @@ struct crashing {
     }
     durability settled(durability d) {
         if (d == durability::durable) {
-            struct stat s;
-            const std::uint64_t size = ::stat(path.c_str(), &s) == 0 ? static_cast<std::uint64_t>(s.st_size) : 0;
-            if (::write(report, &size, sizeof(size)) < 0) ::_exit(10);
+            const std::uint64_t end = in.end();  // the file is pre-filled: its size says nothing (D5)
+            if (::write(report, &end, sizeof(end)) < 0) ::_exit(10);
             if (pl.hit(point::after_durable)) ::_exit(9);
         }
         return d;
@@ -287,9 +286,9 @@ outcome run(kind k, point at, int occurrence, int gen, bool power_loss, const st
             plan pl;
             if (g == gen) pl = {at, occurrence, 0};
             const auto setup_file = [&](auto& j) {
-                if (!recovering) return j.create(path, 1);
+                if (!recovering) return j.create(path, 1, 64u << 10);
                 journal_reader r;
-                return r.open(path) && r.cut() && j.open_append(path);
+                return r.open(path) && r.cut() && j.open_append(path, r.valid_end(), 64u << 10);
             };
             if (k == kind::A) {
                 fsync_each j;
@@ -372,9 +371,16 @@ outcome run(kind k, point at, int occurrence, int gen, bool power_loss, const st
         if (power_loss) {  // everything not durable is lost
             if (k == kind::D) {
                 std::filesystem::copy_file(standby_path, path, std::filesystem::copy_options::overwrite_existing);
-            } else {
+            } else {  // everything past the durable point gone: zeroed (the file keeps its pre-filled size)
                 const std::uint64_t keep = k == kind::C ? journal_format::header_size : durable;
-                if (::truncate(path.c_str(), static_cast<off_t>(keep)) != 0) break;
+                const int fd = ::open(path.c_str(), O_WRONLY);
+                struct stat st;
+                if (fd < 0 || ::fstat(fd, &st) != 0) break;
+                const std::size_t n = static_cast<std::size_t>(st.st_size) > keep ? static_cast<std::size_t>(st.st_size) - keep : 0;
+                const std::string zeros(n, '\0');
+                const bool ok = ::pwrite(fd, zeros.data(), n, static_cast<off_t>(keep)) == static_cast<ssize_t>(n);
+                ::close(fd);
+                if (!ok) break;
             }
         }
     }

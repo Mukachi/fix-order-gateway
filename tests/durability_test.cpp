@@ -68,13 +68,13 @@ std::string recovered(const std::string& path) {
 void each_strategy(const std::string& dir) {
     {
         fsync_each j;
-        j.create(dir + "/a.journal", 1);
+        j.create(dir + "/a.journal", 1, 1u << 20);
         const std::string s = exchange(j);
         check(s != "exchange incomplete" && recovered(dir + "/a.journal") == s, "A fsync each: the exchange recovers exactly");
     }
     {
         group_commit j(4, 500'000);
-        j.create(dir + "/b.journal", 1);
+        j.create(dir + "/b.journal", 1, 1u << 20);
         const std::string s = exchange(j);
         check(s != "exchange incomplete" && recovered(dir + "/b.journal") == s,
               "B group commit (4 records or 0.5 ms): the exchange recovers exactly");
@@ -86,14 +86,15 @@ void each_strategy(const std::string& dir) {
         j.close();
         journal_reader r;
         r.open(dir + "/c.journal");
-        check(s != "exchange incomplete" && recovered(dir + "/c.journal") == s && r.file_size() == (1u << 20) && r.torn(),
+        check(s != "exchange incomplete" && recovered(dir + "/c.journal") == s && r.file_size() == (1u << 20) &&
+                  r.valid_end() < r.file_size() && !r.torn(),
               "C mapped: the exchange recovers exactly; the reader stops at the zeros of the unwritten rest");
     }
 }
 
 void group_bounds(const std::string& dir) {
     group_commit j(3, 1'000'000);  // 3 records or 1 ms
-    j.create(dir + "/g.journal", 1);
+    j.create(dir + "/g.journal", 1, 1u << 20);
     wire w;
     policy p;
     peer_link l;
@@ -137,7 +138,7 @@ void standby(const std::string& dir) {
     std::string s;
     {
         replicated j;
-        j.create(dir + "/d.journal", 1);
+        j.create(dir + "/d.journal", 1, 1u << 20);
         const bool connected = listening && j.connect_standby(ntohs(addr.sin_port));
         s = connected ? exchange(j) : "not connected";
     }  // closing the connection ends the standby's loop

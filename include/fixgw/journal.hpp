@@ -177,14 +177,30 @@ public:
     const std::vector<journal_record>& records() const noexcept { return records_; }
     std::size_t valid_end() const noexcept { return valid_end_; }
     std::size_t file_size() const noexcept { return bytes_.size(); }
-    bool torn() const noexcept { return valid_end_ != bytes_.size(); }
+    // Whether anything but zeros follows the last complete record (a torn
+    // write, or records stranded after a hole); a pre-filled file's zero rest
+    // is not torn (D5).
+    bool torn() const noexcept {
+        for (std::size_t i = valid_end_; i < bytes_.size(); ++i)
+            if (bytes_[i] != 0) return true;
+        return false;
+    }
 
-    // Cuts the file back to its last complete record. False on failure.
+    // Cuts the journal back to its last complete record: zeroes everything
+    // from there to the last non-zero byte, never truncating (a pre-filled
+    // file keeps its size, D5). Records after a hole (group commit's writes
+    // that outlived an earlier, lost one) are zeroed too, so none can be read
+    // back once appending resumes at `valid_end`. False on failure.
     bool cut() const {
-        if (!torn()) return true;
+        std::size_t last = bytes_.size();
+        while (last > valid_end_ && bytes_[last - 1] == 0) --last;
+        if (last == valid_end_) return true;
         const int fd = ::open(path_.c_str(), O_WRONLY | O_CLOEXEC);
         if (fd < 0) return false;
-        const bool ok = ::ftruncate(fd, static_cast<off_t>(valid_end_)) == 0 && ::fdatasync(fd) == 0;
+        const std::vector<char> zeros(last - valid_end_, 0);
+        const bool ok = ::pwrite(fd, zeros.data(), zeros.size(), static_cast<off_t>(valid_end_)) ==
+                            static_cast<ssize_t>(zeros.size()) &&
+                        ::fdatasync(fd) == 0;
         ::close(fd);
         return ok;
     }
@@ -197,9 +213,13 @@ private:
     std::size_t valid_end_ = 0;
 };
 
-// Appends records to a journal file with write(2). Durability (when an
-// appended record counts as safe) is the strategies' (note 004, A to D),
-// layered on this. The record buffer is allocated once, at open.
+// Writes records to a journal file with pwrite(2), each after the last.
+// Durability (when an appended record counts as safe) is the strategies'
+// (note 004, A to D), layered on this. Pre-filled (D5): created zero-filled
+// to `prefill` bytes and written in place, so an fdatasync has only data to
+// write, no change of size to commit; extended by another `prefill` of zeros
+// (written and synced) when a record would pass the end. The record buffer is
+// allocated once, at open.
 class journal_file {
 public:
     journal_file() = default;
@@ -207,53 +227,84 @@ public:
     journal_file& operator=(const journal_file&) = delete;
     ~journal_file() { close(); }
 
-    // Creates a new file for `epoch` (failing if it exists), or opens an
-    // existing one to append after its last complete record.
-    bool create(const std::string& path, std::uint32_t epoch) {
+    // Creates a new file for `epoch`, failing if it exists; `prefill` 0
+    // means no pre-fill (the file grows with each record).
+    bool create(const std::string& path, std::uint32_t epoch, std::size_t prefill = 0) {
         close();
         fd_ = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
         if (fd_ < 0) return false;
+        buffer_.resize(journal_format::record_overhead + journal_format::max_payload);
+        chunk_ = prefill;
+        if (prefill > 0 && !extend()) return false;
         char h[journal_format::header_size];
         std::memcpy(h, journal_format::magic.data(), journal_format::magic.size());
         std::memcpy(h + journal_format::magic.size(), &epoch, 4);
-        buffer_.resize(journal_format::record_overhead + journal_format::max_payload);
-        return write_all(h, sizeof(h)) && ::fdatasync(fd_) == 0;
+        at_ = 0;
+        if (!write_at(h, sizeof(h))) return false;
+        return ::fdatasync(fd_) == 0;
     }
-    bool open_append(const std::string& path) {
+    // Opens an existing journal to continue after its last complete record
+    // (`valid_end`, from the reader, after `cut()`), extending by `prefill`
+    // when full (0: the file grows with each record).
+    bool open_append(const std::string& path, std::size_t valid_end, std::size_t prefill = 0) {
         close();
-        fd_ = ::open(path.c_str(), O_WRONLY | O_APPEND | O_CLOEXEC);
+        fd_ = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
+        if (fd_ < 0) return false;
         buffer_.resize(journal_format::record_overhead + journal_format::max_payload);
-        return fd_ >= 0;
+        const off_t size = ::lseek(fd_, 0, SEEK_END);
+        size_ = size > 0 ? static_cast<std::size_t>(size) : 0;
+        at_ = valid_end;
+        chunk_ = prefill;
+        return true;
     }
+    // Where the next record goes: the end of the records written.
+    std::size_t end() const noexcept { return at_; }
     void close() {
         if (fd_ >= 0) ::close(fd_);
         fd_ = -1;
     }
     int fd() const noexcept { return fd_; }
 
-    // Appends one record; false if it is too large or the write fails.
+    // Appends one record; false if it is too large or a write fails.
     bool append(record_kind kind, session_time t, std::string_view a, std::string_view b = {}) noexcept {
         if (a.size() + b.size() > journal_format::max_payload) return false;
         last_ = encode_record(buffer_.data(), kind, t, a, b);
-        return write_all(buffer_.data(), last_);
+        while (chunk_ > 0 && at_ + last_ > size_)
+            if (!extend()) return false;
+        return write_at(buffer_.data(), last_);
     }
     // The bytes of the record last appended (for a strategy that also sends it).
     std::string_view last_record() const noexcept { return {buffer_.data(), last_}; }
 
 private:
-    bool write_all(const char* p, std::size_t n) noexcept {
+    bool write_at(const char* p, std::size_t n) noexcept {
         while (n > 0) {
-            const ssize_t w = ::write(fd_, p, n);
+            const ssize_t w = ::pwrite(fd_, p, n, static_cast<off_t>(at_));
             if (w < 0 && errno == EINTR) continue;
             if (w <= 0) return false;
             p += w;
+            at_ += static_cast<std::size_t>(w);
             n -= static_cast<std::size_t>(w);
         }
         return true;
     }
+    // Another chunk of zeros past the end, written and synced (D5).
+    bool extend() noexcept {
+        static const char zeros[1 << 16] = {};  // not buffer_: it may hold the record being appended
+        std::size_t left = chunk_;
+        while (left > 0) {
+            const std::size_t n = left < sizeof(zeros) ? left : sizeof(zeros);
+            const ssize_t w = ::pwrite(fd_, zeros, n, static_cast<off_t>(size_));
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) return false;
+            size_ += static_cast<std::size_t>(w);
+            left -= static_cast<std::size_t>(w);
+        }
+        return ::fdatasync(fd_) == 0;
+    }
     int fd_ = -1;
     std::vector<char> buffer_;
-    std::size_t last_ = 0;
+    std::size_t last_ = 0, at_ = 0, size_ = 0, chunk_ = 0;
 };
 
 }  // namespace fixgw

@@ -86,8 +86,7 @@ std::uint64_t file_size(const std::string& p) {
 // orders scheduled `rate` a second apart; each one's latency is from its
 // scheduled time to its release.
 template <class J>
-point_result measure(J& j, const std::string& journal, double ticks_per_ns, double rate, std::string strategy,
-                     std::string bound) {
+point_result measure(J& j, double ticks_per_ns, double rate, std::string strategy, std::string bound) {
     const std::size_t n = warmup + samples;
     std::vector<ticks> released(n, 0), arrival(n, 0);
     release_out out{&released};
@@ -122,7 +121,7 @@ point_result measure(J& j, const std::string& journal, double ticks_per_ns, doub
     for (std::size_t i = 0; i < n; ++i)
         bodies[i] = "11=ORD" + std::to_string(1'000'000 + i) + "\x01" "1=ACC1\x01" "55=VOD.L\x01" "54=1\x01" "38=" +
                     std::to_string(100 * (1 + i % 50)) + "\x01" "40=2\x01" "44=72.53\x01" "59=0\x01";
-    const std::uint64_t bytes_before = file_size(journal);
+    const std::uint64_t bytes_before = j.end();
     const ticks interval = static_cast<ticks>(1e9 / rate * ticks_per_ns), t0 = start() + interval;
     for (std::size_t i = 0; i < n; ++i) {
         const ticks due = t0 + interval * i;
@@ -136,7 +135,7 @@ point_result measure(J& j, const std::string& journal, double ticks_per_ns, doub
     std::vector<ticks> lat;
     lat.reserve(samples);
     for (std::size_t i = warmup; i < n; ++i) lat.push_back(released[i] >= arrival[i] ? released[i] - arrival[i] : 0);
-    point_result r{strategy, bound, rate, summarise_overhead(std::move(lat)), file_size(journal) - bytes_before,
+    point_result r{strategy, bound, rate, summarise_overhead(std::move(lat)), j.end() - bytes_before,
                    out.next == n, 0};
     if (r.complete && released[n - 1] > arrival[0])
         r.sustained_per_s = static_cast<double>(n) / (static_cast<double>(released[n - 1] - arrival[0]) / ticks_per_ns / 1e9);
@@ -179,6 +178,9 @@ int main(int argc, char** argv) {
     const std::string dir = std::filesystem::absolute(dir_c).string();
     const std::string fs = filesystem_of(dir);
     const double tpn = clk.cal.ticks_per_ns;
+    // D5: each journal pre-filled; a point writes about 2 MB, so 8 MB holds it
+    // without an extension on the path (C maps the same size).
+    constexpr std::size_t prefill = 8u << 20;
     std::vector<point_result> points;
     int file_no = 0;
     const auto path = [&] { return dir + "/" + std::to_string(++file_no) + ".journal"; };
@@ -186,23 +188,19 @@ int main(int argc, char** argv) {
     for (const double rate : {1'000.0, 5'000.0, 20'000.0}) {
         {
             fx::fsync_each j;
-            const auto p = path();
-            j.create(p, 1);
-            points.push_back(measure(j, p, tpn, rate, "A", "-"));
+            j.create(path(), 1, prefill);
+            points.push_back(measure(j, tpn, rate, "A", "-"));
         }
         for (const auto [records, wait_us] : {std::pair{4, 20}, std::pair{16, 100}, std::pair{64, 500}}) {
             fx::group_commit j(static_cast<std::size_t>(records), static_cast<std::int64_t>(wait_us) * 1000);
-            const auto p = path();
-            j.create(p, 1);
-            points.push_back(measure(j, p, tpn, rate, "B",
+            j.create(path(), 1, prefill);
+            points.push_back(measure(j, tpn, rate, "B",
                                      std::to_string(records) + " records or " + std::to_string(wait_us) + " us"));
         }
         {
             fx::mapped_journal j;
-            const auto p = path();
-            j.create(p, 1, 256u << 20);
-            points.push_back(measure(j, p, tpn, rate, "C", "-"));
-            points.back().bytes_written = 0;  // the file is its capacity; what was written is not its size
+            j.create(path(), 1, prefill);
+            points.push_back(measure(j, tpn, rate, "C", "-"));
         }
         {
             // D: the standby in this process, on its own core, over loopback.
@@ -225,10 +223,9 @@ int main(int argc, char** argv) {
             });
             {
                 fx::replicated j;
-                const auto p = path();
-                j.create(p, 1);
+                j.create(path(), 1, prefill);
                 j.connect_standby(ntohs(a.sin_port));
-                points.push_back(measure(j, p, tpn, rate, "D", "standby on CPU 4, loopback"));
+                points.push_back(measure(j, tpn, rate, "D", "standby on CPU 4, loopback"));
             }
             standby.join();
             ::close(lfd);
@@ -291,6 +288,7 @@ int main(int argc, char** argv) {
     run.w.member("cpu", cpu);
     run.w.member("standby_cpu", standby_cpu);
     run.w.member("journal_filesystem", fs);
+    run.w.member("journal_prefill_bytes", prefill);
     run.w.member("samples", samples);
     run.w.member("warmup_discarded", warmup);
     run.w.member("lockfree_ipc_commit", FIXGW_LFIPC_COMMIT);

@@ -33,8 +33,14 @@ enum class durability { durable, pending, failed };
 // released. Survives power loss where the device's write cache does.
 class fsync_each {
 public:
-    bool create(const std::string& path, std::uint32_t epoch) { return f_.create(path, epoch); }
-    bool open_append(const std::string& path) { return f_.open_append(path); }
+    // prefill: D5 (journal.hpp); 0 grows the file with each record.
+    bool create(const std::string& path, std::uint32_t epoch, std::size_t prefill = 0) {
+        return f_.create(path, epoch, prefill);
+    }
+    bool open_append(const std::string& path, std::size_t valid_end, std::size_t prefill = 0) {
+        return f_.open_append(path, valid_end, prefill);
+    }
+    std::size_t end() const noexcept { return f_.end(); }
     bool append(record_kind k, session_time t, std::string_view a, std::string_view b) { return f_.append(k, t, a, b); }
     durability make_durable(session_time) { return ::fdatasync(f_.fd()) == 0 ? durability::durable : durability::failed; }
     durability poll(session_time) { return durability::durable; }
@@ -49,8 +55,14 @@ private:
 class group_commit {
 public:
     group_commit(std::size_t max_records, std::int64_t max_wait_ns) : max_records_(max_records), max_wait_ns_(max_wait_ns) {}
-    bool create(const std::string& path, std::uint32_t epoch) { return f_.create(path, epoch); }
-    bool open_append(const std::string& path) { return f_.open_append(path); }
+    // prefill: D5 (journal.hpp); 0 grows the file with each record.
+    bool create(const std::string& path, std::uint32_t epoch, std::size_t prefill = 0) {
+        return f_.create(path, epoch, prefill);
+    }
+    bool open_append(const std::string& path, std::size_t valid_end, std::size_t prefill = 0) {
+        return f_.open_append(path, valid_end, prefill);
+    }
+    std::size_t end() const noexcept { return f_.end(); }
     bool append(record_kind k, session_time t, std::string_view a, std::string_view b) {
         if (!f_.append(k, t, a, b)) return false;
         if (pending_++ == 0) first_ns_ = t.mono_ns;
@@ -115,6 +127,7 @@ public:
     }
     durability make_durable(session_time) { return durability::durable; }
     durability poll(session_time) { return durability::durable; }
+    std::size_t end() const noexcept { return at_; }
 
 private:
     bool map(const std::string& path, int flags, std::size_t capacity) {
@@ -169,8 +182,14 @@ public:
     ~replicated() {
         if (sock_ >= 0) ::close(sock_);
     }
-    bool create(const std::string& path, std::uint32_t epoch) { return f_.create(path, epoch); }
-    bool open_append(const std::string& path) { return f_.open_append(path); }
+    // prefill: D5 (journal.hpp); 0 grows the file with each record.
+    bool create(const std::string& path, std::uint32_t epoch, std::size_t prefill = 0) {
+        return f_.create(path, epoch, prefill);
+    }
+    bool open_append(const std::string& path, std::size_t valid_end, std::size_t prefill = 0) {
+        return f_.open_append(path, valid_end, prefill);
+    }
+    std::size_t end() const noexcept { return f_.end(); }
     // Connects to a standby listening on 127.0.0.1:`port`.
     bool connect_standby(std::uint16_t port, std::int64_t ack_timeout_ms = 1000) {
         sock_ = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);

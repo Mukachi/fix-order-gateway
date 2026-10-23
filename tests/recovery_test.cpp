@@ -80,7 +80,7 @@ void recovery(const std::string& dir) {
     journal_reader r;
     check(r.open(path) && !r.torn() && count(r, record_kind::tick) == 1, "the journal reads back whole, one tick in it");
     file_journal j2;
-    j2.f.open_append(path);
+    j2.f.open_append(path, r.valid_end());
     wire w2;
     ours_t again(ours(), j2, w2, p);
     const bool ok = again.recover(r);

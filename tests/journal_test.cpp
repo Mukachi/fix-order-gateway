@@ -131,7 +131,7 @@ void torn(const std::string& dir) {
     const bool cut_ok = r2.cut();
     {
         journal_file f;
-        f.open_append(path);
+        f.open_append(path, r2.valid_end());
         f.append(record_kind::tick, {8, 5000}, "");
     }
     journal_reader r3;
@@ -161,6 +161,46 @@ void torn(const std::string& dir) {
     check(!r6.open(path), "a wrong header: refused");
 }
 
+// D5: a pre-filled journal, written in place, extended when full; and the
+// cut that zeroes records stranded after a hole.
+void prefilled(const std::string& dir) {
+    const std::string path = dir + "/pre.journal";
+    const auto w = sample();
+    {
+        journal_file f;
+        f.create(path, 1, 256);  // smaller than the records: extended as they come
+        for (int round = 0; round < 3; ++round)
+            for (const auto& r : w) f.append(r.kind, r.t, r.payload);
+    }
+    journal_reader r;
+    r.open(path);
+    bool same = r.records().size() == 3 * w.size();
+    for (std::size_t i = 0; same && i < r.records().size(); ++i)
+        same = r.records()[i].kind == w[i % w.size()].kind && r.records()[i].payload == w[i % w.size()].payload;
+    check(same && r.file_size() % 256 == 0 && r.file_size() > 256 && r.file_size() >= r.valid_end() && !r.torn(),
+          "D5: pre-filled to 256 bytes and extended in 256-byte chunks: every record read back (" +
+              std::to_string(r.valid_end()) + " of " + std::to_string(r.file_size()) + " bytes)");
+
+    // A hole in the middle (a lost write), intact records after it: the cut
+    // zeroes them, and they are never read back after new appends.
+    std::string bytes = read_all(path);
+    const std::size_t hole = journal_format::header_size + 10;
+    for (std::size_t i = hole; i < hole + 8; ++i) bytes[i] = 0;
+    write_all(path, bytes);
+    journal_reader r2;
+    r2.open(path);
+    const bool cut = r2.cut();
+    {
+        journal_file f;
+        f.open_append(path, r2.valid_end(), 256);
+        f.append(record_kind::tick, {99, 9999}, "");
+    }
+    journal_reader r3;
+    r3.open(path);
+    check(cut && r2.records().empty() && r3.records().size() == 1 && r3.records()[0].time.mono_ns == 99 && !r3.torn(),
+          "D5: records after a hole are zeroed by the cut; after appending, only the new record is read");
+}
+
 }  // namespace
 
 int main() {
@@ -172,6 +212,7 @@ int main() {
     crc();
     round_trip(dir);
     torn(dir);
+    prefilled(dir);
     std::filesystem::remove_all(dir);
     return test::result();
 }

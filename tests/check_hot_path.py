@@ -34,9 +34,11 @@ SUBJECTS = {
 
 # Note 003: checked with everything they call.
 REACHING = {"fixgw_session_inbound", "fixgw_session_send"}
-# Note 004 (S6): appending a record allocates nothing; the only system call is
-# the strategy's own (write; C none). __errno_location reads errno (EINTR).
-JOURNAL = {"fixgw_journal_append": {"write@plt", "__errno_location@plt"}, "fixgw_mapped_append": set()}
+# Note 004 (S6): appending a record allocates nothing; the only system calls are
+# the file's own: pwrite, and fdatasync when a pre-filled file is extended (D5;
+# C none). __errno_location reads errno (EINTR).
+JOURNAL = {"fixgw_journal_append": {"pwrite@plt", "pwrite64@plt", "fdatasync@plt", "__errno_location@plt"},
+           "fixgw_mapped_append": set()}
 # __memcpy_chk: memcpy with a bounds check (_FORTIFY_SOURCE, Ubuntu's default);
 # strlen: a reason given as a C string (the codec's `why`) made a string_view.
 MEMORY = {"memcpy@plt", "__memcpy_chk@plt", "memmove@plt", "memchr@plt", "memcmp@plt", "strlen@plt",
