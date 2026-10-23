@@ -100,7 +100,9 @@ public:
 
     int doorbell() const noexcept { return doorbell_; }
     const auto& session() const noexcept { return us_; }
-    bool connected() const noexcept { return conn_.open() && connecting_ < 0; }
+    // Whether a connection is up: safe from any thread (the connection itself
+    // is the engine thread's alone).
+    bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
 
     // Recovery before the loop starts (note 004): every message replayed goes
     // to the application's ring marked replayed.
@@ -140,6 +142,7 @@ public:
         if (conn_.open() && conn_.pending() > 0 && !conn_.flush()) lost(now);
         moved |= drain_overflow();
         if (us_.state().state() == session_state::active) backoff_.reset();
+        connected_.store(conn_.open() && connecting_ < 0, std::memory_order_release);
         return moved;
     }
 
@@ -251,6 +254,7 @@ private:
     bool initiator_;
     int connecting_ = -1, doorbell_ = -1, epoll_ = -1;
     bool not_reading_ = false;
+    std::atomic<bool> connected_{false};
     backoff backoff_;
     std::string inbox_;
     std::deque<app_slot> overflow_;
