@@ -84,7 +84,7 @@ foreach(t conformance_test orders_test matrices_test replay_test indoubt_test fr
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
 
-add_executable(hot_path_subject tests/hot_path_subject.cpp)
+add_executable(hot_path_subject tests/hot_path_subject.cpp tests/hot_path_subject_orders.cpp)
 target_link_libraries(hot_path_subject PRIVATE fixgw)
 if(Python3_FOUND AND CMAKE_OBJDUMP AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64"
    AND NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize")

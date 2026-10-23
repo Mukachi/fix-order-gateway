@@ -32,8 +32,9 @@ SUBJECTS = {
     "fixgw_encode_b": {"memcpy@plt", "__stack_chk_fail@plt"},
 }
 
-# Note 003: checked with everything they call.
-REACHING = {"fixgw_session_inbound", "fixgw_session_send"}
+# Note 003: checked with everything they call; note 007 adds the order book's.
+REACHING = {"fixgw_session_inbound", "fixgw_session_send", "fixgw_book_outbound", "fixgw_book_inbound",
+            "fixgw_book_may_resend"}
 # Note 004 (S6): appending a record allocates nothing; the only system calls are
 # the file's own: pwrite, and fdatasync when a pre-filled file is extended (D5;
 # C none). __errno_location reads errno (EINTR).
@@ -109,7 +110,8 @@ for subject in sorted(REACHING):
             elif t in funcs and t != f:
                 todo.append(t)
     size = sum(len(funcs[f]) for f in seen)
-    check(not bad, f"S6 (note 003) {subject}: {len(seen)} functions, {size} instructions, calls only "
+    note = "007" if subject.startswith("fixgw_book") else "003"
+    check(not bad, f"S6 (note {note}) {subject}: {len(seen)} functions, {size} instructions, calls only "
                    f"memory functions and the stack protector" + (f": found {bad[:5]}" if bad else ""))
 
 for subject, syscalls in sorted(JOURNAL.items()):

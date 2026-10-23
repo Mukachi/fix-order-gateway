@@ -131,8 +131,7 @@ public:
         : cfg_(c), orders_(zeroed<order>(c.max_orders)), orders_size_(c.max_orders),
           ids_(zeroed<id_entry>(table_size(c.max_orders * 4))), ids_size_(table_size(c.max_orders * 4)),
           exec_ids_(zeroed<id_entry>(table_size(c.max_exec_ids))), exec_ids_size_(table_size(c.max_exec_ids)),
-          sends_(c.throttle_messages ? c.throttle_messages : 1) {
-        arena_.reserve(c.id_bytes);
+          arena_(zeroed<char>(c.id_bytes)), sends_(c.throttle_messages ? c.throttle_messages : 1) {
     }
 
     struct verdict {
@@ -160,7 +159,7 @@ public:
         } else if (count_ == orders_size_) {
             return {false, 0, "order capacity reached"};
         }
-        if ((id_count_ + 1) * 2 > ids_size_ || arena_.size() + id->size() > cfg_.id_bytes) return {false, 0, "ClOrdID capacity reached"};
+        if ((id_count_ + 1) * 2 > ids_size_ || arena_used_ + id->size() > cfg_.id_bytes) return {false, 0, "ClOrdID capacity reached"};
         // D4: a cancel is counted but never refused (it can only be of a live order here)
         if (type != "F" && throttled(now)) return {false, oldest_send() + cfg_.throttle_window_ns, "throttled"};
         return {true, 0, nullptr};
@@ -302,7 +301,7 @@ private:
         return s;
     }
 
-    std::string_view key(const id_entry& e) const noexcept { return {arena_.data() + e.offset, e.length}; }
+    std::string_view key(const id_entry& e) const noexcept { return {arena_.get() + e.offset, e.length}; }
     std::string_view current_id(const order& n) const noexcept { return n.current == none ? std::string_view{} : key(ids_[n.current]); }
     std::uint32_t id_index(std::string_view id) const noexcept {
         const std::uint64_t h = detail::fnv1a(id);
@@ -316,9 +315,10 @@ private:
         return i == none ? none : ids_[i].order;
     }
     bool store(std::string_view s, std::uint32_t& offset) {
-        if (arena_.size() + s.size() > cfg_.id_bytes) return false;
-        offset = static_cast<std::uint32_t>(arena_.size());
-        arena_.insert(arena_.end(), s.begin(), s.end());  // within the reserved capacity: no allocation
+        if (arena_used_ + s.size() > cfg_.id_bytes) return false;
+        offset = static_cast<std::uint32_t>(arena_used_);
+        std::memcpy(arena_.get() + arena_used_, s.data(), s.size());
+        arena_used_ += s.size();
         return true;
     }
     bool add_id(std::string_view id, std::uint32_t o) {
@@ -419,7 +419,8 @@ private:
     std::size_t exec_ids_size_;
     std::size_t id_count_ = 0, exec_count_ = 0;
     std::uint32_t last_id_ = none;
-    std::vector<char> arena_;
+    table<char> arena_;  // every ClOrdID and ExecID kept, back to back
+    std::size_t arena_used_ = 0;
     std::vector<std::int64_t> sends_;
     std::size_t sends_head_ = 0, sends_count_ = 0;
 };
