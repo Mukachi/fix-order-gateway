@@ -28,5 +28,14 @@ Ns per call, range over 3 runs, clock cost included (about the empty window's p5
 <!-- /results -->
 
 <!-- results:store-summary -->
-Store figures: not yet measured (design note 004).
+| Strategy | Bound | Offered /s | p50 | p99 | p99.9 | max | Sustained /s |
+|---|---|---|---|---|---|---|---|
+| A | - | 1,000 | 49.3 µs–49.5 µs | 55.6 µs–56.0 µs | 59.5 µs–60.3 µs | 730.8 µs–1,661.4 µs | 1,000 |
+| B | 4 records or 20 us | 1,000 | 64.9 µs–65.3 µs | 68.5 µs–72.5 µs | 78.5 µs–175.5 µs | 1,698.6 µs–1,924.8 µs | 1,000 |
+| B | 16 records or 100 us | 1,000 | 144.9 µs–145.4 µs | 148.9 µs–149.0 µs | 155.3 µs–162.2 µs | 1,644.5 µs–2,056.6 µs | 1,000 |
+| B | 64 records or 500 us | 1,000 | 544.8 µs–545.4 µs | 548.5 µs–550.0 µs | 556.4 µs–577.3 µs | 1,476.1 µs–2,239.7 µs | 1,000 |
+| C | - | 1,000 | 390–394 | 3,099–3,382 | 5,802–6,455 | 104.0 µs–106.5 µs | 1,000 |
+| D | standby on CPU 4, loopback | 1,000 | 72.4 µs–73.0 µs | 79.4 µs–79.9 µs | 83.4 µs–83.9 µs | 110.6 µs–977.1 µs | 1,000 |
+
+Order arrival to release of its bytes, ns, at 1,000 orders a second, range over 3 runs. Every rate, the guarantees and the conditions: [RESULTS.md](RESULTS.md).
 <!-- /results -->

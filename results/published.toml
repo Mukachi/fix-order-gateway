@@ -16,3 +16,11 @@ runs = ["codec-dev-lnx01-20261022T192017Z.json",
         "codec-dev-lnx01-20261022T192443Z.json",
         "codec-dev-lnx01-20261022T192912Z.json"]
 withheld = ["frame_scalar_er", "frame_scalar_hb"]
+
+# Note 004: the journal's cost per durability strategy, pre-filled files (D5),
+# three runs back to back in one bench-mode session.
+[store]
+note = "004"
+runs = ["store-dev-lnx01-20261023T003324Z.json",
+        "store-dev-lnx01-20261023T003610Z.json",
+        "store-dev-lnx01-20261023T003856Z.json"]

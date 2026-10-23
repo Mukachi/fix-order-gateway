@@ -9,6 +9,7 @@ HP ProLiant DL380 Gen9, BIOS P89 (08/29/2024); 2 × Intel(R) Xeon(R) CPU E5-2699
 | Set | Runs | First run | Commit | Governor | Idle states enabled | Turbo | NUMA balancing | Boot isolation | Reserved CPUs |
 |---|---|---|---|---|---|---|---|---|---|
 | codec (note 009) | 3 | 2026-10-22 19:20 UTC | 1f21799 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| store (note 004) | 3 | 2026-10-23 00:33 UTC | 8e844c5 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 
 Every run met note 004's bench-mode conditions (each file's `environment.bench_mode`, checked before use) and was built clean; compiler and flags are in each file's `environment.build`. Ranges are min–max over a set's runs.
 
@@ -73,3 +74,30 @@ Throughput, frame and decode, NewOrderSingle, coalesced, 100,000 messages (a ran
 | SIMD, padded | slow | 11.38 | 18 | 3.54 | 3.53 | 3.54 |
 | two-stage | fast | 4.25–4.33 | 27 | 3.82–3.85 | 3.78 | 3.92 |
 | two-stage | slow | 17.47–17.50 | 33 | 2.89 | 2.87 | 2.93 |
+
+## Store and recovery (note 004)
+
+Time from an order's scheduled arrival to the release of its bytes, by durability strategy, open loop at fixed rates (queueing included), 20,000 samples per point, 1,000 warm-up discarded; the session on CPU 2, D's standby on CPU 4 over loopback (the protocol's cost, without a network); journals on ext4 on an HPE Smart Array P440ar logical volume (one SAS disk, RAID 0) with a battery-backed write cache. Each strategy survives: A, power loss (controller cache protected); B, power loss (controller cache protected); C, the process dying; not power loss; D, the loss of this machine, with the standby elsewhere. Sustained: orders released per second, first scheduled to last released, the lowest over the runs; overloaded where below the offered rate. Harness: lockfree-ipc `1a42550`.
+
+| Strategy | Bound | Offered /s | p50 | p99 | p99.9 | max | Sustained /s |
+|---|---|---|---|---|---|---|---|
+| A | - | 1,000 | 49.3 µs–49.5 µs | 55.6 µs–56.0 µs | 59.5 µs–60.3 µs | 730.8 µs–1,661.4 µs | 1,000 |
+| B | 4 records or 20 us | 1,000 | 64.9 µs–65.3 µs | 68.5 µs–72.5 µs | 78.5 µs–175.5 µs | 1,698.6 µs–1,924.8 µs | 1,000 |
+| B | 16 records or 100 us | 1,000 | 144.9 µs–145.4 µs | 148.9 µs–149.0 µs | 155.3 µs–162.2 µs | 1,644.5 µs–2,056.6 µs | 1,000 |
+| B | 64 records or 500 us | 1,000 | 544.8 µs–545.4 µs | 548.5 µs–550.0 µs | 556.4 µs–577.3 µs | 1,476.1 µs–2,239.7 µs | 1,000 |
+| C | - | 1,000 | 390–394 | 3,099–3,382 | 5,802–6,455 | 104.0 µs–106.5 µs | 1,000 |
+| D | standby on CPU 4, loopback | 1,000 | 72.4 µs–73.0 µs | 79.4 µs–79.9 µs | 83.4 µs–83.9 µs | 110.6 µs–977.1 µs | 1,000 |
+| A | - | 5,000 | 42.9 µs–43.4 µs | 52.4 µs–53.1 µs | 200.3 µs–902.9 µs | 1,272.6 µs–1,852.7 µs | 5,000 |
+| B | 4 records or 20 us | 5,000 | 60.2 µs–60.5 µs | 66.6 µs–67.1 µs | 69.2 µs–809.4 µs | 929.4 µs–1,910.6 µs | 5,000 |
+| B | 16 records or 100 us | 5,000 | 140.3 µs–140.7 µs | 147.0 µs–147.5 µs | 154.3 µs–460.0 µs | 979.2 µs–1,129.7 µs | 5,000 |
+| B | 64 records or 500 us | 5,000 | 343.8 µs–344.0 µs | 547.9 µs–548.2 µs | 555.3 µs–609.4 µs | 1,112.4 µs–1,461.8 µs | 5,000 |
+| C | - | 5,000 | 380–392 | 2,210–2,465 | 4,909–5,987 | 103.2 µs–105.7 µs | 5,000 |
+| D | standby on CPU 4, loopback | 5,000 | 18.8 µs–19.3 µs | 26.1 µs–26.5 µs | 29.4 µs–30.0 µs | 33.8 µs–35.8 µs | 5,000 |
+| A | - | 20,000 | 41.7 µs–42.2 µs | 47.9 µs–52.3 µs | 52.8 µs–829.9 µs | 66.8 µs–980.4 µs | 20,000 |
+| B | 4 records or 20 us | 20,000 | 71.0 µs–71.7 µs | 102.0 µs–102.9 µs | 245.2 µs–1,297.1 µs | 995.0 µs–2,046.3 µs | 20,000 |
+| B | 16 records or 100 us | 20,000 | 91.3 µs–91.8 µs | 148.2 µs–149.1 µs | 223.4 µs–1,593.0 µs | 1,056.3 µs–2,107.9 µs | 19,998 |
+| B | 64 records or 500 us | 20,000 | 296.1 µs–296.4 µs | 549.6 µs–550.2 µs | 553.0 µs–1,975.9 µs | 558.1 µs–2,475.9 µs | 20,000 |
+| C | - | 20,000 | 258–265 | 1,934–2,245 | 5,969–7,490 | 104.0 µs–105.3 µs | 20,001 |
+| D | standby on CPU 4, loopback | 20,000 | 18.5 µs–18.7 µs | 23.9 µs–24.2 µs | 27.8 µs–28.3 µs | 32.6 µs–40.6 µs | 20,001 |
+
+Replay (recovery): 1,000,002 records (88 MB) in 0.55 s, 1.82 million records a second.
