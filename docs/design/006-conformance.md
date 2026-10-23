@@ -1,6 +1,6 @@
 # 006 — Conformance
 
-**Status:** Draft · **Updated:** 2026-10-23
+**Status:** Agreed · **Updated:** 2026-10-23
 
 ## Proposal
 
@@ -149,7 +149,7 @@ Shep (see Tasks).
 
 ## Tasks
 
-- [ ] Shep: agree D1–D6; decide whether QuickFIX's acceptance-test suite is run (D6)
+- [x] Shep: agree D1–D6; decide whether QuickFIX's acceptance-test suite is run (D6)
 - [ ] Dictionary generator and the fetched orchestration (D1, D2)
 - [ ] Session checks: scenario 14, 2q, 2r, 14k (D3–D5)
 - [ ] `tests/conformance_test.cpp`, every case; note 003's labels corrected
@@ -162,3 +162,4 @@ Shep (see Tasks).
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-23 | Draft | Written for review. Sources: *FIX Session Layer Test Cases* V1.0, June 2020 (official PDF, read in full; its applicability section still says last revised 20 September 2002); `FIX44Session.xml` from `FIXTradingCommunity/orchestrations` (Apache-2.0; the seven session messages, their fields and presence, read for D1). Today's session against the document: 2q and 2r not handled (every non-session MsgType is delivered), and of scenario 14 only what the codec establishes alone (14d, 14g, 14h for header and trailer tags, 14f for data lengths); the rest needs D1's dictionary |
+| 2026-10-23 | Agreed | Approved by Shep, every decision as proposed (option A each): D1 the dictionary generated at build time from `FIX44Session.xml` fetched at a pinned commit; D2 *defined* means in FIX 4.4's full tag list or 5000–9999; D3 the checks in the session, after the header and sequence checks; D4 the session sends BusinessMessageReject for a valid unsupported MsgType, from a per-session list; D5 a field containing SOH rejected with reason 17; D6 both roles against QuickFIX, our acceptor against an initiator written to QuickFIX's documented API, and QuickFIX's acceptance-test suite not run |
