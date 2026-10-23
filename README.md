@@ -26,3 +26,7 @@ specification. Work in progress: see [docs/design/001-scope.md](docs/design/001-
 
 Ns per call, range over 3 runs, clock cost included (about the empty window's p50). The branch predictor has two stable states for this code; figures are per state, never pooled, and how many episodes fall in each is not reproducible (note 009). Full tables and conditions: [RESULTS.md](RESULTS.md).
 <!-- /results -->
+
+<!-- results:store-summary -->
+Store figures: not yet measured (design note 004).
+<!-- /results -->

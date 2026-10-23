@@ -34,6 +34,9 @@ SUBJECTS = {
 
 # Note 003: checked with everything they call.
 REACHING = {"fixgw_session_inbound", "fixgw_session_send"}
+# Note 004 (S6): appending a record allocates nothing; the only system call is
+# the strategy's own (write; C none). __errno_location reads errno (EINTR).
+JOURNAL = {"fixgw_journal_append": {"write@plt", "__errno_location@plt"}, "fixgw_mapped_append": set()}
 # __memcpy_chk: memcpy with a bounds check (_FORTIFY_SOURCE, Ubuntu's default);
 # strlen: a reason given as a C string (the codec's `why`) made a string_view.
 MEMORY = {"memcpy@plt", "__memcpy_chk@plt", "memmove@plt", "memchr@plt", "memcmp@plt", "strlen@plt",
@@ -106,6 +109,28 @@ for subject in sorted(REACHING):
     size = sum(len(funcs[f]) for f in seen)
     check(not bad, f"S6 (note 003) {subject}: {len(seen)} functions, {size} instructions, calls only "
                    f"memory functions and the stack protector" + (f": found {bad[:5]}" if bad else ""))
+
+for subject, syscalls in sorted(JOURNAL.items()):
+    if subject not in funcs:
+        check(False, f"{subject} found")
+        continue
+    seen, todo, bad = set(), [subject], []
+    while todo:
+        f = todo.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        direct, indirect = calls(funcs[f])
+        bad += [f"{f}: indirect call {o}" for o in indirect]
+        bad += [f"{f}: {m}" for m, _ in funcs[f] if m in ("syscall", "sysenter", "int")]
+        for t in direct:
+            if t.endswith("@plt"):
+                if t not in MEMORY and t not in syscalls:
+                    bad.append(f"{f}: calls {t}")
+            elif t in funcs and t != f:
+                todo.append(t)
+    check(not bad, f"S6 (note 004) {subject}: {len(seen)} functions, calls only memory functions"
+                   + (f" and {sorted(syscalls)}" if syscalls else "") + (f": found {bad[:5]}" if bad else ""))
 
 print("FAILED" if failures else "all passed")
 sys.exit(1 if failures else 0)
