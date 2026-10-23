@@ -41,7 +41,7 @@ It does not:
 
 **The network on this machine.** One interface has a link: `eno1`, Broadcom BCM5719 at 1 Gb/s
 (`tg3`). Unused: a dual-port Broadcom BCM57810 at 10 Gb/s (`bnx2x`, `ens1f0`/`ens1f1`, NUMA
-node 0), no cable. A counterparty process on this machine reached over loopback never touches a
+node 0), 10GBASE-T copper ports (RJ-45), no cable. A counterparty process on this machine reached over loopback never touches a
 card: loopback measures the kernel's TCP code alone, a floor below any real network. The two
 BCM57810 ports joined by a cable, one of them in its own network namespace, would put a real card
 and driver on the path within one machine (D3).
@@ -100,11 +100,12 @@ for them, or one already connected (D6), and the connection is closed without a 
   acts where there is a card (D3); over loopback it does nothing. Proposed: measured on the card
   path if D3 is (a), with the exact options checked against kernel 7.0's own documentation when
   built (what I found so far is mailing-list proposals, not the merged text).
-- **D3. The card on the path.** (a) Join the two BCM57810 ports with a cable (an SFP+ direct-attach
-  cable or two SFP+ optics and a fibre, depending on the ports' cages, to be checked), one port in
-  its own network namespace, so the counterparty's traffic crosses a real card and driver; (b)
-  loopback only, stated as the floor without a card. Proposed: (a) if you have or can get the
-  cable; (b) otherwise, and the published figures say which.
+- **D3. The card on the path.** (a) Join the two BCM57810 ports with a Cat6a patch cable (the
+  ports are 10GBASE-T copper), one port in its own network namespace, so the counterparty's
+  traffic crosses a real card and driver; (b) loopback only, stated as the floor without a card.
+  10GBASE-T's line coding costs about 2–2.6 µs per link, published figures say, against ~0.3 µs
+  for SFP+ direct-attach: a card path here would show that cost, which a trading venue's SFP+ or
+  fibre links do not have, and the figures must say so. Proposed: (a), with that stated.
 - **D4. Direct loop against pipeline.** Both built and measured (note 001), the default chosen
   from the numbers. Proposed as stated; the decision is which to build first: the direct loop,
   which the tests of notes 003 and 004 already describe.
@@ -148,4 +149,4 @@ for them, or one already connected (D6), and the connection is closed without a 
 
 | Date | Stage | Finding |
 |---|---|---|
-| 2026-10-23 | Draft | Written for review. Network examined first: `eno1` (BCM5719, 1 Gb/s, `tg3`) the only link; BCM57810 dual 10 Gb/s (`bnx2x`, NUMA node 0) unused, no cable; `net.core.busy_poll` and `busy_read` 0 |
+| 2026-10-23 | Draft | Written for review. Network examined first: `eno1` (BCM5719, 1 Gb/s, `tg3`) the only link; BCM57810 dual 10 Gb/s (`bnx2x`, NUMA node 0) unused, no cable, its ports 10GBASE-T copper (`ethtool`: twisted pair, 100M/1G/10G); `net.core.busy_poll` and `busy_read` 0 |
