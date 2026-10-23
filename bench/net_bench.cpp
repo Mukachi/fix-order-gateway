@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -31,7 +32,11 @@
 #include <vector>
 
 #include <arpa/inet.h>
+#include <linux/ethtool.h>
+#include <linux/sockios.h>
+#include <net/if.h>
 #include <sys/epoll.h>
+#include <sys/ioctl.h>
 
 namespace {
 
@@ -228,6 +233,29 @@ result order_path_pipeline(std::uint32_t ip, std::uint16_t port, double rate, do
     return r;
 }
 
+// The conditions the kernel's network path ran under: busy polling's defaults
+// (D2) and the card's receive interrupt coalescing (-1 if not readable).
+long read_sysctl(const char* path) {
+    FILE* f = std::fopen(path, "r");
+    if (!f) return -1;
+    long v = -1;
+    if (std::fscanf(f, "%ld", &v) != 1) v = -1;
+    std::fclose(f);
+    return v;
+}
+long rx_usecs(const char* ifname) {
+    const int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -1;
+    ethtool_coalesce c{};
+    c.cmd = ETHTOOL_GCOALESCE;
+    ifreq ifr{};
+    std::strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    ifr.ifr_data = reinterpret_cast<char*>(&c);
+    const long v = ::ioctl(fd, SIOCETHTOOL, &ifr) == 0 ? static_cast<long>(c.rx_coalesce_usecs) : -1;
+    ::close(fd);
+    return v;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -276,6 +304,9 @@ int main(int argc, char** argv) {
     run.w.member("journal_cpu", journal_cpu);
     run.w.member("sender_cpu", sender_cpu);
     run.w.member("echo_bytes", echo_size);
+    run.w.member("busy_read_us", read_sysctl("/proc/sys/net/core/busy_read"));
+    run.w.member("busy_poll_us", read_sysctl("/proc/sys/net/core/busy_poll"));
+    run.w.member("card_rx_usecs", rx_usecs("ens1f0"));
     run.w.member("lockfree_ipc_commit", FIXGW_LFIPC_COMMIT);
     run.w.key("points");
     run.w.begin_array();
