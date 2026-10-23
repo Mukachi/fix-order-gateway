@@ -182,7 +182,7 @@ void scenario_1s() {
         fixture f(acceptor_config());
         f.s.on_connected(at(0));
         f.feed(client("D", 1, "11=X|"));
-        check(f.k.written.empty() && f.k.disconnects == 1, "1S: first message not a Logon: disconnect, nothing sent");
+        check(f.k.written.empty() && f.k.disconnects == 1, "2S: first message not a Logon: disconnect, nothing sent");
     }
 }
 

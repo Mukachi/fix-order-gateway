@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: x64,      runner: ubuntu-24.04,     kind: release }
+          - { name: x64,      runner: ubuntu-24.04,     kind: release, interop: interop }
           - { name: x64-tsan, runner: ubuntu-24.04,     kind: tsan }
           - { name: x64-asan, runner: ubuntu-24.04,     kind: asan }
           - { name: arm64,    runner: ubuntu-24.04-arm, kind: release }
@@ -44,4 +44,4 @@ jobs:
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends g++ cmake ninja-build python3 git binutils ca-certificates >/dev/null
             git config --global --add safe.directory /src
-            ci/test.sh ${{ matrix.kind }}'
+            ci/test.sh ${{ matrix.kind }} ${{ matrix.interop }}'

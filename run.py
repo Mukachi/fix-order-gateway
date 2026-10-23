@@ -3,6 +3,8 @@
 
   python run.py report          write RESULTS.md and fill the README's result blocks
   python run.py report --check  regenerate in memory; exit 1 naming any difference
+  python run.py conformance [--check]
+                                CONFORMANCE.md from the conformance test's output (note 006)
 
 As lockfree-ipc's report (its note 007), and built on it: its environment
 checker, conditions table and formatting are used from the copy CMake fetched
@@ -433,6 +435,119 @@ def report(root, check, lfipc=None):
     return 0
 
 
+# The FIX Session Layer Test Cases, V1.0, June 2020 (note 006): every case in
+# the document's order, whether the document makes it mandatory, a short
+# title, and for a case not shown by the test, why.
+NOT_IMPLEMENTED_17 = "not implemented: encryption is optional; EncryptMethod must be 0, any other is an invalid Logon (1B d, 1S d)"
+CASES = [
+    ("1B a", True, "Establish the transport connection"), ("1B b", True, "Send Logon"),
+    ("1B c", True, "Valid Logon reply"), ("1B d", True, "Invalid Logon reply"),
+    ("1B e", True, "First message not a Logon"),
+    ("1S a", True, "Valid Logon"), ("1S b", True, "Logon with a duplicate identity"),
+    ("1S c", True, "Logon from an unauthenticated or unconfigured identity"), ("1S d", True, "Invalid Logon"),
+    ("2S", True, "First message not a Logon"),
+    ("2a", True, "MsgSeqNum as expected"), ("2b", True, "MsgSeqNum higher than expected"),
+    ("2c", True, "MsgSeqNum lower than expected, no PossDupFlag"), ("2d", True, "Garbled message"),
+    ("2e", True, "PossDupFlag Y, OrigSendingTime not after SendingTime, MsgSeqNum lower"),
+    ("2f", True, "PossDupFlag Y, OrigSendingTime after SendingTime"),
+    ("2g", True, "PossDupFlag Y, OrigSendingTime missing"), ("2h", True, "BeginString as expected"),
+    ("2i", True, "BeginString not as expected"), ("2j", True, "CompIDs as expected"),
+    ("2k", True, "CompIDs not as expected"), ("2l", True, "BodyLength correct"), ("2m", True, "BodyLength incorrect"),
+    ("2n", True, "SendingTime accurate"), ("2o", True, "SendingTime not accurate"), ("2p", True, "MsgType valid"),
+    ("2q", True, "MsgType not valid"), ("2r", True, "MsgType valid but not supported"),
+    ("2s", True, "BeginString, BodyLength, MsgType first"), ("2t", True, "BeginString, BodyLength, MsgType not first"),
+    ("3a", True, "CheckSum valid"), ("3b", True, "CheckSum invalid"), ("3c", True, "Garbled message"),
+    ("3d", True, "CheckSum last, three characters, SOH"), ("3e", True, "CheckSum not last, not three characters or no SOH"),
+    ("4a", True, "Nothing sent for HeartBtInt"), ("4b", True, "TestRequest received"),
+    ("5", True, "Valid Heartbeat"), ("6", True, "Nothing received for HeartBtInt plus 20%"),
+    ("7", True, "Valid Reject"), ("8", True, "Valid ResendRequest"),
+    ("9", False, "Synchronize sequence numbers"),
+    ("10a", True, "GapFill, MsgSeqNum above expected"), ("10b", True, "GapFill, MsgSeqNum as expected"),
+    ("10c", True, "GapFill, MsgSeqNum below expected, PossDupFlag Y"),
+    ("10d", True, "GapFill, MsgSeqNum below expected, no PossDupFlag"), ("10e", True, "GapFill, NewSeqNo not above MsgSeqNum"),
+    ("11a", True, "Reset, NewSeqNo above expected"), ("11b", True, "Reset, NewSeqNo equal to expected"),
+    ("11c", True, "Reset, NewSeqNo below expected"),
+    ("12", True, "Initiate logout"), ("13a", True, "Logout in reply to ours"), ("13b", True, "Unsolicited Logout"),
+    ("14a", True, "Tag not defined in the specification"), ("14b", True, "Required tag missing"),
+    ("14c", True, "Tag not defined for this message type"), ("14d", True, "Tag without a value"),
+    ("14e", True, "Value out of range or not enumerated"), ("14f", True, "Value in the wrong format"),
+    ("14g", True, "Header, body, trailer out of order"), ("14h", True, "Tag not in a group repeated"),
+    ("14i", True, "NumInGroup count incorrect"), ("14j", True, "Group fields out of order"),
+    ("14k", True, "Non-data value contains SOH"),
+    ("14l", False, "Application not available",
+     "not implemented: optional; the engine never refuses a message for being busy (it waits in the ring or the overflow, note 005)"),
+    ("14m", True, "Conditionally required field missing",
+     "note 007: conditional rules belong to application messages (BusinessMessageReject 5), with their dictionary"),
+    ("14n", True, "Field in cleartext and encrypted, different values", "not applicable: encryption (17) not supported"),
+    ("15", False, "Fields in different orders"),
+    ("16a", True, "Message queued while disconnected"), ("16b", True, "Reconnect with queued messages"),
+] + [(f"17{c}", False, "Encryption", NOT_IMPLEMENTED_17) for c in "abcdefghij"] + [
+    ("18a", False, "Third-party addressing, as expected",
+     "not implemented: optional; OnBehalfOfCompID and DeliverToCompID are accepted as header fields, not checked"),
+    ("18b", False, "Third-party addressing, not as expected",
+     "not implemented: optional; OnBehalfOfCompID and DeliverToCompID are accepted as header fields, not checked"),
+    ("19a", True, "PossResend Y, already seen",
+     "note 007: seen or not is decided by message-specific ids (ClOrdID, ExecID), the order state machine's"),
+    ("19b", True, "PossResend Y, not seen"),
+    ("20", True, "ResendRequest while ours is outstanding"),
+]
+CONFORMANCE_LINE = re.compile(r"^(pass|FAIL)  (\d+[A-Z]?(?: [a-z])?|\d+[a-z]): (.*)$")
+
+
+def conformance(root, check, test):
+    out = subprocess.run([str(test)], capture_output=True, text=True).stdout
+    shown, problems = {}, []
+    for line in out.splitlines():
+        m = CONFORMANCE_LINE.match(line)
+        if not m:
+            continue
+        shown.setdefault(m.group(2), []).append((m.group(1) == "pass", m.group(3)))
+    known = {c[0] for c in CASES}
+    problems += [f"the test prints case {k}, which is not in the document" for k in shown if k not in known]
+    rows, counts = [], {}
+    for case in CASES:
+        cid, mandatory, title = case[:3]
+        reason = case[3] if len(case) > 3 else None
+        lines = shown.get(cid, [])
+        if reason and lines:
+            problems.append(f"{cid}: listed as not shown ({reason.split(':')[0]}) but the test shows it")
+        if not reason and not lines:
+            problems.append(f"{cid}: not shown by the test")
+        if reason:
+            result = reason.split(":")[0]
+            detail = reason.split(":", 1)[1].strip()
+        else:
+            result = "pass" if lines and all(ok for ok, _ in lines) else "FAIL"
+            detail = "; ".join(w for _, w in lines)
+        key = ("mandatory" if mandatory else "optional", result)
+        counts[key] = counts.get(key, 0) + 1
+        rows.append(f"| {cid} | {'yes' if mandatory else 'no'} | {title} | {result} | {detail} |")
+    problems += [f"{r.split('|')[1].strip()}: FAIL" for r in rows if "| FAIL |" in r]
+    summary = ", ".join(f"{n} {kind} {res}" for (kind, res), n in sorted(counts.items()))
+    text = (
+        "# Conformance\n\n"
+        "Generated by `python run.py conformance` from the output of `tests/conformance_test.cpp`; do not edit.\n"
+        "Basis: *FIX Session Layer Test Cases*, Version 1.0, June 2020, FIX Protocol Limited, every case in its\n"
+        "order. Design: [note 006](docs/design/006-conformance.md). Each result shown by the test lists what it\n"
+        "checked; a case not shown says why.\n\n"
+        f"{len(CASES)} cases: {summary}.\n\n"
+        "| Case | Mandatory | Condition | Result | Shown by, or why not |\n|---|---|---|---|---|\n"
+        + "\n".join(rows) + "\n")
+    path = root / "CONFORMANCE.md"
+    if problems:
+        print("conformance: " + "; ".join(problems))
+        return 1
+    if not check:
+        path.write_text(text)
+        print(f"wrote CONFORMANCE.md: {len(CASES)} cases, {summary}")
+        return 0
+    if not path.is_file() or path.read_text() != text:
+        print("conformance --check: CONFORMANCE.md is out of date (run: python run.py conformance)")
+        return 1
+    print("conformance --check: CONFORMANCE.md agrees with the test")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -440,7 +555,13 @@ def main():
     rp.add_argument("--check", action="store_true", help="compare only; exit 1 on any difference")
     rp.add_argument("--root", type=Path, default=Path(__file__).resolve().parent, help=argparse.SUPPRESS)
     rp.add_argument("--lockfree-ipc", dest="lfipc", help="the fetched lockfree-ipc (default: build/_deps/lockfree_ipc-src)")
+    cp = sub.add_parser("conformance", help="generate CONFORMANCE.md from the conformance test's output")
+    cp.add_argument("--check", action="store_true", help="compare only; exit 1 on any difference")
+    cp.add_argument("--root", type=Path, default=Path(__file__).resolve().parent, help=argparse.SUPPRESS)
+    cp.add_argument("--test", type=Path, help="the conformance test (default: build/conformance_test)")
     args = ap.parse_args()
+    if args.cmd == "conformance":
+        return conformance(args.root, args.check, args.test or args.root / "build" / "conformance_test")
     try:
         return report(args.root, args.check, args.lfipc)
     except ReportError as e:

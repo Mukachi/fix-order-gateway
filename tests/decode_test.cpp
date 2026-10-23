@@ -85,7 +85,7 @@ void all() {
     rejects("35=0|49=C|0=x|", reject_reason::invalid_tag_number, 0, "tag 0");
     rejects("35=0|49=C|012=x|", reject_reason::invalid_tag_number, 0, "tag with a leading zero");
     rejects("35=0|49=C|4a=x|", reject_reason::invalid_tag_number, 0, "tag not a number");
-    rejects("35=0|49=C|abc|", reject_reason::invalid_tag_number, 0, "field without =");
+    rejects("35=0|49=C|abc|", reject_reason::soh_in_value, 49, "field without =: the rest of a value that contained SOH (14k)");
     rejects("35=0|49=C|58=|", reject_reason::tag_without_value, 58, "tag without a value");
     rejects("35=D|49=C|11=X|56=V|", reject_reason::tag_out_of_order, 56, "header tag after the body");
     rejects("35=0|49=C|49=D|", reject_reason::tag_repeated, 49, "header tag repeated");

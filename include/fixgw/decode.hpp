@@ -12,13 +12,23 @@
 
 namespace fixgw {
 
-// SessionRejectReason (373) values the codec can establish on its own.
+// SessionRejectReason (373) values: those the codec can establish on its own,
+// and those the dictionary checks add (validate.hpp, note 006).
 namespace reject_reason {
 inline constexpr int invalid_tag_number = 0;
+inline constexpr int required_tag_missing = 1;
+inline constexpr int tag_not_defined_for_message_type = 2;
 inline constexpr int tag_without_value = 4;
+inline constexpr int value_incorrect = 5;
 inline constexpr int incorrect_data_format = 6;
+inline constexpr int compid_problem = 9;
+inline constexpr int sending_time_accuracy = 10;
+inline constexpr int invalid_msg_type = 11;
 inline constexpr int tag_repeated = 13;
 inline constexpr int tag_out_of_order = 14;
+inline constexpr int group_fields_out_of_order = 15;
+inline constexpr int incorrect_num_in_group = 16;
+inline constexpr int soh_in_value = 17;  // Non "data" value includes field delimiter (SOH)
 inline constexpr int other = 99;
 }  // namespace reject_reason
 
@@ -248,8 +258,16 @@ struct decoder {
                 tag = tag * 10 + static_cast<std::uint32_t>(p[i] - '0');
                 ++i;
             }
-            if (i == tag_start || i == n || p[i] != '=' || p[tag_start] == '0')
-                return done(rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by ="));
+            if (i == tag_start || i == n || p[i] != '=' || p[tag_start] == '0') {
+                // No '=' before the next SOH: the rest of the previous value,
+                // which contained SOH (scenario 14k); otherwise a bad tag.
+                std::size_t k = tag_start;
+                FIXGW_NOVECTOR
+                while (k < n && p[k] != soh && p[k] != '=') ++k;
+                return done(count > 0 && k < n && p[k] == soh
+                                ? rules.fail(reject_reason::soh_in_value, out.fields_[count - 1].tag, "a value contains SOH")
+                                : rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by ="));
+            }
             ++i;
             std::size_t value_start = i, value_length;
             if (rules.data_tag != 0) {
@@ -368,8 +386,10 @@ template <std::size_t MaxFields = 256, std::size_t Words>
             tag = tag * 10 + static_cast<std::uint32_t>(base[d] - '0');
             ++d;
         }
-        if (d == i || d != eq || eq == end || base[i] == '0')
-            return done(rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by ="));
+        if (d == i || d != eq || eq == end || base[i] == '0')  // as the scalar decoder, scenario 14k included
+            return done(count > 0 && structural_index<Words>::next(ix.sep, i, end) < eq
+                            ? rules.fail(reject_reason::soh_in_value, out.fields_[count - 1].tag, "a value contains SOH")
+                            : rules.fail(reject_reason::invalid_tag_number, 0, "tag is not a positive integer followed by ="));
         const std::size_t value_start = eq + 1;
         std::size_t value_length;
         if (rules.data_tag != 0) {

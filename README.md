@@ -3,6 +3,13 @@
 A FIX 4.4 order entry gateway: session layer, recovery and order entry, written from the public
 specification. Work in progress: see [docs/design/001-scope.md](docs/design/001-scope.md).
 
+## Conformance
+
+Every case of the *FIX Session Layer Test Cases* (V1.0, June 2020), with what the test shows or why
+a case is not shown: [CONFORMANCE.md](CONFORMANCE.md), generated from the test's output.
+Interoperability with QuickFIX v1.16.0, both roles, across a dropped connection: `interop/`
+([note 006](docs/design/006-conformance.md)).
+
 ## Results
 
 <!-- results:codec-summary -->

@@ -1,6 +1,7 @@
 build/
 build-fuzz/
 build-ci-*/
+build-interop/
 .cache/
 __pycache__/
 *.o

@@ -6,7 +6,8 @@
 // Sink, called as outputs arise (D3):
 //   void write(std::string_view bytes);             bytes for the connection
 //   void disconnect();                              close the connection
-//   void deliver(const message_view<>& m);          an application message, in order, once
+//   void deliver(const message_view<>& m);          an application message of a supported
+//                                                   MsgType, in order, once
 //   void log(session_log level, std::string_view what, std::uint64_t seq);
 //   bool resend(const message_view<>& original);    an application message is about to be
 //                                                   resent: true resends it, false gap-fills
@@ -22,6 +23,7 @@
 #include <fixgw/decode.hpp>
 #include <fixgw/encode.hpp>
 #include <fixgw/framing.hpp>
+#include <fixgw/validate.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -53,49 +55,13 @@ struct session_config {
     std::size_t queue_messages = 256;  // application messages held while not logged on (D2)
     std::size_t max_body = 1024;       // largest body accepted for the queue
     std::size_t max_frame = 64 * 1024;  // largest message, either way
+    // Application MsgTypes this session takes (note 006, D4), space-separated:
+    // another valid one is answered with BusinessMessageReject. By default the
+    // order-entry messages (note 001) and BusinessMessageReject itself.
+    std::string_view app_msg_types = "D F G 8 9 j";
 };
 
 namespace detail {
-
-inline std::optional<std::uint64_t> parse_uint(std::string_view s) noexcept {
-    if (s.empty() || s.size() > 19) return std::nullopt;
-    std::uint64_t v = 0;
-    for (const char c : s) {
-        if (c < '0' || c > '9') return std::nullopt;
-        v = v * 10 + static_cast<std::uint64_t>(c - '0');
-    }
-    return v;
-}
-
-// Days since 1970-01-01 of a civil date (Howard Hinnant's public algorithm).
-inline std::int64_t days_from_civil(std::int64_t y, std::int64_t m, std::int64_t d) noexcept {
-    y -= m <= 2;
-    const std::int64_t era = (y >= 0 ? y : y - 399) / 400;
-    const std::int64_t yoe = y - era * 400;
-    const std::int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const std::int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146'097 + doe - 719'468;
-}
-
-// A UTCTimestamp, "YYYYMMDD-HH:MM:SS" or with ".sss", as milliseconds since 1970.
-inline std::optional<std::int64_t> parse_utc_timestamp(std::string_view s) noexcept {
-    if (s.size() != 17 && s.size() != 21) return std::nullopt;
-    const auto num = [&](std::size_t at, std::size_t n) -> std::int64_t {
-        std::int64_t v = 0;
-        for (std::size_t i = at; i < at + n; ++i) {
-            if (s[i] < '0' || s[i] > '9') return -1;
-            v = v * 10 + (s[i] - '0');
-        }
-        return v;
-    };
-    if (s[8] != '-' || s[11] != ':' || s[14] != ':' || (s.size() == 21 && s[17] != '.')) return std::nullopt;
-    const std::int64_t y = num(0, 4), mo = num(4, 2), d = num(6, 2), h = num(9, 2), mi = num(12, 2), se = num(15, 2);
-    const std::int64_t ms = s.size() == 21 ? num(18, 3) : 0;
-    if (y < 0 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 || se < 0 || se > 60 ||
-        ms < 0)
-        return std::nullopt;
-    return ((days_from_civil(y, mo, d) * 24 + h) * 60 + mi) * 60'000 + se * 1000 + ms;
-}
 
 // A short text built without allocating, for Logout and Reject reasons.
 class text {
@@ -261,10 +227,14 @@ private:
         return queue_bytes_.data() + static_cast<std::size_t>(&s - queue_.data()) * cfg_.max_body;
     }
 
+    // A frame starting 8=FIX. whose BeginString (up to its SOH) is not FIX.4.4;
+    // a FIX.4.4 frame garbled after it is not (scenario 2t, not 2i).
     static bool wrong_version(const char* p, std::size_t n) noexcept {
-        constexpr std::string_view fix = "8=FIX.";
-        if (n < begin_string.size() || std::string_view(p, fix.size()) != fix) return false;
-        return std::string_view(p, begin_string.size()) != begin_string;
+        constexpr std::string_view fix = "8=FIX.", ours = "8=FIX.4.4\x01";
+        if (n < fix.size() || std::string_view(p, fix.size()) != fix) return false;
+        const std::size_t end = std::string_view(p, n).find(soh);
+        if (end == std::string_view::npos) return n >= ours.size();  // too long for ours
+        return std::string_view(p, end + 1) != ours;
     }
 
     // MsgSeqNum read straight from the bytes, for a message that did not decode.
@@ -387,6 +357,21 @@ private:
         }
 
         const bool poss_dup = in_.get(43) == std::string_view("Y");
+        // Scenarios 2q, 2r and 14 (note 006, D3, D4): a message that fails the
+        // dictionary is rejected and its number consumed, under the same
+        // sequence rules as a message the codec rejected.
+        if (const content c = check_content(type); !c.r.ok) {
+            if (*seq < expected_ && poss_dup) {
+                sink_.log(session_log::info, "possible duplicate already received: ignored", *seq);
+                return;
+            }
+            if (sequence_handled(*seq, now)) return;
+            ++expected_;
+            if (c.business) send_business_reject(*seq, type, now);
+            else send_reject(*seq, c.r.ref_tag, type, c.r.reject_reason, c.r.why, now);
+            after_in_order(now);
+            return;
+        }
         if (type == "4" && in_.get(123) != std::string_view("Y")) {  // SequenceReset-Reset: any number
             on_sequence_reset(*seq, now);
             return;
@@ -429,6 +414,30 @@ private:
         after_in_order(now);
     }
 
+    struct content {
+        decode_result r;
+        bool business;  // answered with BusinessMessageReject, not Reject
+    };
+    // The dictionary's verdict on the message in in_ (D3, D4).
+    content check_content(std::string_view type) const noexcept {
+        if (detail::is_admin(type)) return {validate(in_, type), false};
+        if (listed(cfg_.app_msg_types, type)) return {{true, 0, 0, nullptr}, false};
+        if (!valid_msg_type(type)) return {{false, reject_reason::invalid_msg_type, 35, "Invalid MsgType"}, false};
+        return {{false, 0, 0, "Unsupported Message Type"}, true};
+    }
+
+    // Scenario 2r: BusinessMessageReject, reason 3; an application message, so
+    // resent (not gap-filled) when asked for.
+    void send_business_reject(std::uint64_t ref_seq, std::string_view ref_type, session_time now) {
+        sink_.log(session_log::warning, "Unsupported Message Type", ref_seq);
+        emit("j", now, [&](encoder& e) {
+            e.add(45, ref_seq);
+            e.add(372, ref_type);
+            e.add(380, std::uint64_t{3});
+            e.add(58, "Unsupported Message Type");
+        });
+    }
+
     // For an invalid message: the sequence rules that apply before a Reject.
     // True if they dealt with it.
     bool sequence_handled(std::uint64_t seq, session_time now) {
@@ -463,6 +472,12 @@ private:
             } else {
                 logout_and_disconnect("Logon reply with the wrong CompIDs", now);
             }
+            return;
+        }
+        if (const decode_result c = validate(in_, "A"); !c.ok) {  // scenarios 1B d, 1S d
+            detail::text why;
+            why << "invalid Logon: " << std::string_view(c.why) << ", tag " << std::uint64_t{c.ref_tag};
+            logout_and_disconnect(why.view(), now);
             return;
         }
         const auto hb = detail::parse_uint(in_.get(108).value_or(std::string_view{}));
@@ -606,7 +621,8 @@ private:
         }
     }
 
-    // Scenario 8: application messages and Reject resent with PossDupFlag=Y;
+    // Scenario 8: application messages and Reject resent with PossDupFlag=Y
+    // (BusinessMessageReject always, the others as the sink's hook decides);
     // the rest, and anything the store no longer has, gap-filled.
     void serve_resend(std::uint64_t seq, session_time now) {
         const auto begin = detail::parse_uint(in_.get(7).value_or(std::string_view{}));
@@ -627,7 +643,7 @@ private:
             bool resend = false;
             if (!bytes.empty() && decoder<256>::decode(bytes.data(), bytes.size(), stored_).ok) {
                 const std::string_view t = stored_.msg_type();
-                resend = t == "3" || (!detail::is_admin(t) && sink_.resend(stored_));
+                resend = t == "3" || t == "j" || (!detail::is_admin(t) && sink_.resend(stored_));
             }
             if (!resend) {
                 if (fill_from == 0) fill_from = s;
