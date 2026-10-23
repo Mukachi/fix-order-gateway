@@ -88,6 +88,12 @@ if(FIXGW_FUZZ)
   target_link_options(fuzz_session PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
+add_executable(net_peer bench/net_peer.cpp)
+target_link_libraries(net_peer PRIVATE fixgw lfipc Threads::Threads)
+add_executable(net_bench bench/net_bench.cpp)
+target_link_libraries(net_bench PRIVATE fixgw lfipc Threads::Threads)
+target_compile_definitions(net_bench PRIVATE LFIPC_RESULTS_DIR="${CMAKE_SOURCE_DIR}/results")
+
 add_executable(store_bench bench/store_bench.cpp)
 target_link_libraries(store_bench PRIVATE fixgw lfipc Threads::Threads)
 target_compile_definitions(store_bench PRIVATE LFIPC_RESULTS_DIR="${CMAKE_SOURCE_DIR}/results")

@@ -73,7 +73,8 @@ struct engine_config {
     std::int64_t spin_ns = 50'000;             // spin_then_block: how long to spin after the last activity
     std::int64_t block_timeout_ns = 1'000'000;  // block: the longest wait, so ticks and B's bound still fire
     socket_options socket{};
-    std::uint16_t port = 0;  // initiator: where to connect
+    std::uint16_t port = 0;                // initiator: where to connect
+    std::uint32_t ip = INADDR_LOOPBACK;    // host order
 };
 
 template <class Strategy, class Policy>
@@ -177,7 +178,7 @@ private:
     }
     bool try_connect(session_time now) {
         if (connecting_ >= 0 || !backoff_.due(now.mono_ns)) return false;
-        connecting_ = connect_start(cfg_.port, cfg_.socket);
+        connecting_ = connect_start(cfg_.port, cfg_.socket, cfg_.ip);
         if (connecting_ < 0) backoff_.failed(now.mono_ns);
         return true;
     }

@@ -1,0 +1,49 @@
+#!/bin/sh
+# Puts the 10 Gb card on the measured path (note 005, D3): its two ports
+# (ens1f0, ens1f1) joined by a cable, ens1f1 moved into a network namespace
+# so traffic between them crosses the card instead of loopback.
+#   our side:  ens1f0 10.99.0.1/24 (main namespace)
+#   far side:  ens1f1 10.99.0.2/24 (namespace fixgw-peer)
+# systemd-networkd is told to leave both ports alone for the duration (a rule
+# under /run: a reboot clears it). Usage: sudo tools/card-link up|down|status
+set -eu
+NS=fixgw-peer
+A=ens1f0
+B=ens1f1
+RULE=/run/systemd/network/05-fixgw-card.network
+
+case "${1:-}" in
+up)
+  printf '[Match]\nName=%s %s\n\n[Link]\nUnmanaged=yes\n' "$A" "$B" > "$RULE"
+  networkctl reload
+  ip netns add "$NS"
+  ip link set "$B" netns "$NS"
+  ip addr flush dev "$A"
+  ip addr add 10.99.0.1/24 dev "$A"
+  ip link set "$A" up
+  ip netns exec "$NS" ip link set lo up
+  ip netns exec "$NS" ip addr add 10.99.0.2/24 dev "$B"
+  ip netns exec "$NS" ip link set "$B" up
+  for i in $(seq 1 50); do
+    [ "$(ip netns exec "$NS" cat /sys/class/net/$B/carrier 2>/dev/null)" = 1 ] && [ "$(cat /sys/class/net/$A/carrier)" = 1 ] && break
+    sleep 0.2
+  done
+  ping -c 3 -q -I "$A" 10.99.0.2 | tail -2
+  echo "card link up: $A 10.99.0.1 <-> $B 10.99.0.2 (namespace $NS)"
+  ;;
+down)
+  ip netns del "$NS" 2>/dev/null || true   # ens1f1 returns to the main namespace
+  ip addr flush dev "$A" 2>/dev/null || true
+  rm -f "$RULE"
+  networkctl reload
+  echo "card link down"
+  ;;
+status)
+  ip -br addr show "$A"
+  ip netns exec "$NS" ip -br addr show "$B" 2>/dev/null || echo "$B: not in namespace $NS"
+  ;;
+*)
+  echo "usage: $0 up|down|status" >&2
+  exit 2
+  ;;
+esac
