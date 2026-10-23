@@ -24,3 +24,18 @@ note = "004"
 runs = ["store-dev-lnx01-20261023T003324Z.json",
         "store-dev-lnx01-20261023T003610Z.json",
         "store-dev-lnx01-20261023T003856Z.json"]
+
+# Note 005: TCP round trip and the order path, three paths (loopback; the
+# 10 Gb card, Cat6, far end in a namespace; the card with kernel busy polling
+# at 50 us), three runs each, one bench-mode session.
+[net]
+note = "005"
+runs = ["net-dev-lnx01-20261023T160514Z.json",
+        "net-dev-lnx01-20261023T160612Z.json",
+        "net-dev-lnx01-20261023T160709Z.json",
+        "net-dev-lnx01-20261023T160807Z.json",
+        "net-dev-lnx01-20261023T160914Z.json",
+        "net-dev-lnx01-20261023T161022Z.json",
+        "net-dev-lnx01-20261023T161130Z.json",
+        "net-dev-lnx01-20261023T161235Z.json",
+        "net-dev-lnx01-20261023T161340Z.json"]

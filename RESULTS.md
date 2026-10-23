@@ -10,6 +10,7 @@ HP ProLiant DL380 Gen9, BIOS P89 (08/29/2024); 2 × Intel(R) Xeon(R) CPU E5-2699
 |---|---|---|---|---|---|---|---|---|---|
 | codec (note 009) | 3 | 2026-10-22 19:20 UTC | 1f21799 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | store (note 004) | 3 | 2026-10-23 00:33 UTC | 8e844c5 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| net (note 005) | 9 | 2026-10-23 16:05 UTC | 4970988 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 
 Every run met note 004's bench-mode conditions (each file's `environment.bench_mode`, checked before use) and was built clean; compiler and flags are in each file's `environment.build`. Ranges are min–max over a set's runs.
 
@@ -101,3 +102,17 @@ Time from an order's scheduled arrival to the release of its bytes, by durabilit
 | D | standby on CPU 4, loopback | 20,000 | 18.5 µs–18.7 µs | 23.9 µs–24.2 µs | 27.8 µs–28.3 µs | 32.6 µs–40.6 µs | 20,001 |
 
 Replay (recovery): 1,000,002 records (88 MB) in 0.55 s, 1.82 million records a second.
+
+## Transport and engine loop (note 005)
+
+Round trip: a 200-byte message out over TCP and back from net_peer (busy-polling on its own core), closed loop, per wait mode of our side; the floor of the kernel's path. Order path: orders submitted by the application at a fixed rate (open loop) through the engine, the direct loop (strategy A) or the pipeline, to net_peer's venue and its ExecutionReport back to the application's ring; latency from each order's scheduled time; every order pays two fdatasync calls (the order journaled before it is sent, its ExecutionReport before it reaches the application). Application on CPU 2, engine 4, pipeline journal 6 and sender 8. Paths: loopback (the kernel's TCP code, no card); card: the two ports of a Broadcom BCM57810 (10GBASE-T, bnx2x) joined by a Cat6 cable, the far end in its own network namespace; 10GBASE-T's line coding costs ~2-2.6 us per link, which SFP+ or fibre links do not. loopback: 3 runs, busy_read 0 us, card rx-usecs 24; card: 3 runs, busy_read 0 us, card rx-usecs 24; card-busypoll: 3 runs, busy_read 50 us, card rx-usecs 24. Harness: lockfree-ipc `1a42550`.
+
+| Measure | loopback p50 | loopback p99 | card p50 | card p99 | card-busypoll p50 | card-busypoll p99 |
+|---|---|---|---|---|---|---|
+| round trip, busy-poll | 7,317–7,470 | 10.4 µs–10.5 µs | 39.5 µs–40.1 µs | 47.1 µs–47.4 µs | 30.8 µs–31.2 µs | 36.3 µs–37.4 µs |
+| round trip, block | 13.8 µs | 15.2 µs–15.3 µs | 41.5 µs–45.6 µs | 47.7 µs–52.4 µs | 31.7 µs–32.0 µs | 36.4 µs–37.7 µs |
+| round trip, spin then block | 7,211–7,487 | 10.3 µs–10.5 µs | 37.5 µs–39.9 µs | 44.2 µs–47.7 µs | 30.8 µs–31.7 µs | 36.3 µs–37.5 µs |
+| order path, direct, 1,000/s | 122.5 µs–124.1 µs | 130.8 µs–132.2 µs | 150.9 µs–151.5 µs | 160.7 µs–160.9 µs | 151.0 µs–151.8 µs | 159.9 µs–161.8 µs |
+| order path, pipeline, 1,000/s | 106.9 µs–107.7 µs | 115.0 µs–115.8 µs | 138.7 µs–140.6 µs | 148.4 µs–149.7 µs | 134.5 µs–135.4 µs | 142.4 µs–143.6 µs |
+| order path, direct, 10,000/s | 237.5 µs–240.3 µs | 330.5 µs–333.7 µs | 234.2 µs–235.0 µs | 322.1 µs–326.0 µs | 235.2 µs–236.9 µs | 322.9 µs–327.1 µs |
+| order path, pipeline, 10,000/s | 99.2 µs–99.7 µs | 112.4 µs–135.4 µs | 152.9 µs–184.3 µs | 191.3 µs–195.4 µs | 147.9 µs–150.4 µs | 193.1 µs–195.5 µs |

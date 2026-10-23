@@ -41,5 +41,15 @@ Order arrival to release of its bytes, ns, at 1,000 orders a second, range over 
 <!-- /results -->
 
 <!-- results:net-summary -->
-Transport figures: not yet measured (design note 005).
+| Measure | loopback p50 | card p50 | card-busypoll p50 |
+|---|---|---|---|
+| round trip, busy-poll | 7,317–7,470 | 39.5 µs–40.1 µs | 30.8 µs–31.2 µs |
+| round trip, block | 13.8 µs | 41.5 µs–45.6 µs | 31.7 µs–32.0 µs |
+| round trip, spin then block | 7,211–7,487 | 37.5 µs–39.9 µs | 30.8 µs–31.7 µs |
+| order path, direct, 1,000/s | 122.5 µs–124.1 µs | 150.9 µs–151.5 µs | 151.0 µs–151.8 µs |
+| order path, pipeline, 1,000/s | 106.9 µs–107.7 µs | 138.7 µs–140.6 µs | 134.5 µs–135.4 µs |
+| order path, direct, 10,000/s | 237.5 µs–240.3 µs | 234.2 µs–235.0 µs | 235.2 µs–236.9 µs |
+| order path, pipeline, 10,000/s | 99.2 µs–99.7 µs | 152.9 µs–184.3 µs | 147.9 µs–150.4 µs |
+
+Range over the runs of each path. Conditions, p99 and the method: [RESULTS.md](RESULTS.md).
 <!-- /results -->
