@@ -1,6 +1,6 @@
 # 004 — Store and recovery
 
-**Status:** Built; three runs published 2026-10-23, awaiting review for Measured · **Updated:** 2026-10-23
+**Status:** Measured · **Updated:** 2026-10-23
 
 ## Proposal
 
@@ -30,7 +30,7 @@ It does not:
 - open sockets or run the engine loop (note 005). Here a session runs in a child process,
   connected through a socketpair to a counterparty session in the parent;
 - feed databases or archives (note 001: off the hot path, later, from the journal);
-- compact or roll journals across days beyond a new file per sequence epoch.
+- compact, roll or snapshot journals: one file per session, replayed whole (Review, 2026-10-23).
 
 ## Design
 
@@ -66,8 +66,10 @@ input is appended, made durable as the strategy says, and only then are the outp
 
 **Record format.** `length (u32), kind (u8), mono_ns (i64), utc_ms (i64), payload, CRC32C (u32)`.
 On opening, records are read until one is short or fails its CRC: that is a torn write from the
-crash, its outputs were never released (by the rule above), so it is cut off. A new file starts
-at each sequence reset (D4 of note 003) and records which file it follows.
+crash, its outputs were never released (by the rule above), so it is cut off. One file per
+session, replayed whole; a sequence reset (D4 of note 003) is replayed like any other input. The
+header's epoch field is kept for a later split, which would need a snapshot of the session at the
+start of each file (Review, 2026-10-23).
 
 **The four strategies** (note 001's table), each a policy of the journal writer:
 
@@ -148,7 +150,8 @@ machine runs over loopback and states so: it measures the protocol, not a networ
 - [x] Record format, writer, reader with torn-tail cut; S3
 - [x] Held-output sink and the engine step (input, append, durable, release); store; replay
 - [x] Strategies A, B, C, D (standby loop in the library; its own program with the crash tests)
-- [ ] A new file per sequence epoch: open, Shep to decide (Review)
+- [x] File per sequence epoch: decided, one file per session (Review)
+- [x] Review against the Spec (Shep)
 - [x] Fail points; crash tests in a child process; simulated power loss; S1, S2, S4
 - [x] Benchmark; three bench-mode runs; S5; S6 check
 - [ ] Review
@@ -167,3 +170,4 @@ machine runs over loopback and states so: it measures the protocol, not a networ
 | 2026-10-22 | Built (partial) | `tests/crash_test.cpp`. The fail points are in test wrappers, not in the library: around the strategy (before an append; half a record written, then death; after an append, not durable; durable, before release) and around the connection (before the first byte of a release; half of it written, which includes resends). Our journaled initiator runs in a child process over a socketpair, sending 8 orders; the counterparty, a plain acceptor in the parent, sees every frame first. The child is killed at the chosen point (its 1st to 10th time there, in the first child or in the one that recovers); a new child recovers from the journal (cut, replayed, disconnected, connected again) and finishes; power loss is simulated by cutting the journal back to the last offset the child reported durable (for C, to the header; for D, by recovering from the standby's journal). Checked per run: no MsgSeqNum carried two different messages (S1, gap fills excepted), every order reached the counterparty's application exactly once, the counterparty never saw the sequence go back. Results: A, B and D correct in all 120 runs each, killed and with power loss; C correct in all 100 runs killed, and broken in 45 of 100 with power loss, by the sequence going back, as its guarantee says (S4). Half the runs crash (the rest name an occurrence the run never reaches); 24 to 36 of each strategy's crashed runs had orders resent with PossDup after recovery: the in-doubt cases, journaled but unreleased at the crash. A mutant releasing before the journal broke every strategy in its first run, by the sequence going back. The test's own simulation had a flaw first: a crash before anything was durable cut the journal to nothing, header included; the header is durable from creation, so the cut now stops there. Clean under ASan and UBSan and TSan; about 65 s |
 | 2026-10-23 | Agreed | **D5, agreed with Shep: pre-filled journal files.** The bench-mode check run (scratchpad, `2afe0a5`; every point complete) showed `fdatasync` stalls of 100–140 ms (B 4 records/20 µs at 5,000/s, p99 106 ms; B 16/100 µs at 20,000/s, p99 97 ms; A at 1,000/s max 20 ms), each queueing hundreds of open-loop orders behind it. A probe (no root, 50,000 records of 89 bytes, each followed by `fdatasync`, twice): appended to a growing file, p50 123 µs, p99 220 µs, max 5.6–7.4 ms, 8–9 over 1 ms; written in place into a zero-filled file, p50 49 µs, p99 67 µs, max 1.0–1.8 ms, 0–2 over 1 ms. A growing file makes each `fdatasync` commit the new size through ext4's own journal; a pre-filled one leaves only data. The 100 ms stalls did not recur in the 6 s probes; the bench-mode rerun decides. Built: `journal_file` creates a file zero-filled to `prefill` bytes and writes records in place with `pwrite`, extending by another chunk of zeros (written and synced) when a record would pass the end; `cut()` now zeroes from the last complete record to the last non-zero byte instead of truncating, so records stranded after a hole (group commit's writes outliving an earlier lost one) cannot be read back once appending resumes; `torn()` means non-zero bytes after the valid end; `open_append` takes the valid end. Tests added: extension in 256-byte chunks; a hole with intact records after it, zeroed by the cut and never read back. The crash test runs on pre-filled files (power loss simulated by zeroing past the durable point) with the same results. The S6 check allows `pwrite`, and `fdatasync` for an extension. Also from the check run: D at 1,000/s p50 73 µs against 18 µs at 5,000/s and above: between records both threads block, so each record pays two wake-ups from idle; a property of a blocking standby and acknowledgement wait, recorded, not changed here (busy polling is note 005's) |
 | 2026-10-23 | Built (runs) | **Three runs published**: `results/store-dev-lnx01-20261023T003324Z.json`, `...003610Z.json`, `...003856Z.json`, back to back in one bench-mode session, `8e844c5`, clean, journals pre-filled to 8 MB on ext4; every point complete in every run. Order arrival to release, p50 (range over the runs): A 49 µs at 1,000/s, 43 µs at 5,000/s, 42 µs at 20,000/s, sustaining every offered rate (before D5 it saturated near 7,600/s); B adds its wait: 4 records/20 µs 65, 60, 71 µs; 16/100 µs 145, 140, 91 µs; 64/500 µs 545, 344, 296 µs; C 0.26–0.39 µs; D 73 µs at 1,000/s and 19 µs at 5,000/s and 20,000/s (the standby's and the acknowledgement's wake-ups at the low rate). p50s agree within about 1% across runs; the p99.9 and max spread more (A at 5,000/s p99.9 0.2–0.9 ms: occasional `fdatasync` events of 0.2–2 ms). Worst max anywhere 2.5 ms. Replay 1.82 million records a second (1,000,002 records, 88 MB, in 0.55 s). What it shows: with `fdatasync` at ~45 µs on this controller's protected cache, A, the strongest single-machine guarantee, is also the fastest durable strategy at every rate measured; B's grouping only adds its wait, because at these rates the disk is never the bottleneck it exists to relieve. D on one machine (loopback, the protocol's cost without a network) is faster than A from 5,000/s, slower at 1,000/s. C is two orders of magnitude cheaper and survives only the process dying. Against the Spec: S1, S2, S4 (crash_test), S3 (journal_test), S5 (these runs), S6 (check_hot_path). Open: the per-epoch file (Shep) |
+| 2026-10-23 | Measured | Reviewed and approved by Shep against the Spec: S1–S6 met as recorded above. **Decided with Shep: one journal file per session, replayed whole**, in place of the Draft's new file per sequence epoch: replaying only the newest file would lose the state an epoch starts from (the connection, orders queued while disconnected) and renumber what follows; a split is only safe with a snapshot of the session at the start of each file, which is more scope than recovery needs now (replay runs at 1.8 million records a second). The header's epoch field stays, for that later split. On C, left out of the summary above: 0.26–0.39 µs p50, about a hundred times cheaper than A, at the price of its guarantee: it survives the process dying, not power loss, and the crash tests showed it failing there (45 of 100 runs, the sequence going back). It suits only where the counterparty's resend can cover a lost tail, or where a standby (D) carries the durability; on its own it is not safe for orders |
