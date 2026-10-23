@@ -54,12 +54,19 @@ public:
             failed_.store(true, std::memory_order_release);
             return false;
         }
+        if (report_) report_(report_ctx_, w);  // before anything waiting on it can move
         durable_.store(w, std::memory_order_release);
         syncs_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     std::size_t durable() const noexcept { return durable_.load(std::memory_order_acquire); }
     std::uint64_t syncs() const noexcept { return syncs_.load(std::memory_order_relaxed); }
+    // Called with each new durable position, after the fdatasync and before
+    // it is published (the crash tests simulate power loss from it).
+    void on_durable(void (*f)(void*, std::size_t), void* ctx) noexcept {
+        report_ = f;
+        report_ctx_ = ctx;
+    }
     bool failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
 private:
@@ -68,6 +75,8 @@ private:
     alignas(128) std::atomic<std::size_t> durable_;
     std::atomic<bool> failed_{false};
     std::atomic<std::uint64_t> syncs_{0};
+    void (*report_)(void*, std::size_t) = nullptr;
+    void* report_ctx_ = nullptr;
 };
 
 // One output on its way to the sender: tagged with the journal position its
@@ -102,6 +111,7 @@ public:
     bool recover(const journal_reader& r) { return recovered_ = us_.recover(r); }
     const auto& session() const noexcept { return us_; }
     std::uint64_t syncs() const noexcept { return journal_.syncs(); }
+    void on_durable(void (*f)(void*, std::size_t), void* ctx) noexcept { journal_.on_durable(f, ctx); }
 
     // Runs the three stages until `stop` or the connection is lost; this
     // thread is the session stage.
@@ -172,8 +182,13 @@ private:
         for (;;) {
             if (!ring_->try_pop(c)) {
                 if (conn_.pending() > 0) conn_.flush();
-                if (done.load(std::memory_order_acquire) && !ring_->try_pop(c)) return;
-                if (!done.load(std::memory_order_relaxed)) continue;
+                // One reading of `done` decides: reading it twice let a chunk
+                // already sent be sent again when it turned true in between.
+                if (!done.load(std::memory_order_acquire)) continue;
+                if (!ring_->try_pop(c)) {  // done, and nothing left
+                    conn_.flush();
+                    return;
+                }
             }
             while (journal_.durable() < c.position) {  // note 004's rule
                 if (journal_.failed()) return;

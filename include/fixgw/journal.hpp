@@ -228,20 +228,40 @@ public:
     ~journal_file() { close(); }
 
     // Creates a new file for `epoch`, failing if it exists; `prefill` 0
-    // means no pre-fill (the file grows with each record).
+    // means no pre-fill (the file grows with each record). Built under a
+    // temporary name (header, pre-fill, synced) and renamed into place, the
+    // directory synced: a crash leaves no journal or a whole one, never one
+    // without its header.
     bool create(const std::string& path, std::uint32_t epoch, std::size_t prefill = 0) {
         close();
-        fd_ = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+        if (::access(path.c_str(), F_OK) == 0) return false;
+        const std::string tmp = path + ".new";
+        ::unlink(tmp.c_str());  // a half-built one from an earlier crash
+        fd_ = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
         if (fd_ < 0) return false;
         buffer_.resize(journal_format::record_overhead + journal_format::max_payload);
-        chunk_ = prefill;
-        if (prefill > 0 && !extend()) return false;
         char h[journal_format::header_size];
         std::memcpy(h, journal_format::magic.data(), journal_format::magic.size());
         std::memcpy(h + journal_format::magic.size(), &epoch, 4);
         at_ = 0;
         if (!write_at(h, sizeof(h))) return false;
-        return ::fdatasync(fd_) == 0;
+        size_ = at_;
+        chunk_ = prefill;
+        if (prefill > size_) {  // the first chunk: up to `prefill`, after the header
+            const std::size_t keep = chunk_;
+            chunk_ = prefill - size_;
+            const bool ok = extend();
+            chunk_ = keep;
+            if (!ok) return false;
+        } else if (::fdatasync(fd_) != 0) {
+            return false;
+        }
+        if (::rename(tmp.c_str(), path.c_str()) != 0) return false;
+        const std::string dir = path.find('/') == std::string::npos ? "." : path.substr(0, path.rfind('/'));
+        const int d = ::open(dir.empty() ? "/" : dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        const bool synced = d >= 0 && ::fsync(d) == 0;
+        if (d >= 0) ::close(d);
+        return synced;
     }
     // Opens an existing journal to continue after its last complete record
     // (`valid_end`, from the reader, after `cut()`), extending by `prefill`
