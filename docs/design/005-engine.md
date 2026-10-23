@@ -1,6 +1,6 @@
 # 005 — Transport and engine loop
 
-**Status:** Agreed · **Updated:** 2026-10-23
+**Status:** Built (partial) · **Updated:** 2026-10-23
 
 ## Proposal
 
@@ -138,7 +138,7 @@ for them, or one already connected (D6), and the connection is closed without a 
 
 ## Tasks
 
-- [ ] Transport: sockets, both roles, send buffering, reconnect; S1, S4
+- [x] Transport: sockets, both roles, send buffering, reconnect; S1, S4
 - [ ] The acceptor's first message and the identity registry; S3
 - [ ] The direct loop with the application's rings; the three wait modes
 - [ ] The pipeline (session, journal, sender); S2 for both
@@ -151,3 +151,4 @@ for them, or one already connected (D6), and the connection is closed without a 
 |---|---|---|
 | 2026-10-23 | Draft | Written for review. Network examined first: `eno1` (BCM5719, 1 Gb/s, `tg3`) the only link; BCM57810 dual 10 Gb/s (`bnx2x`, NUMA node 0) unused, no cable, its ports 10GBASE-T copper (`ethtool`: twisted pair, 100M/1G/10G); `net.core.busy_poll` and `busy_read` 0 |
 | 2026-10-23 | Agreed | Approved by Shep, D1–D6 as proposed: all three wait modes built and measured, busy-poll the default for the measured path; kernel busy polling measured on the card path, its options checked against kernel 7.0's documentation; the card path by a Cat6a cable between the two 10GBASE-T ports (one in its own namespace), with the 10GBASE-T line-coding cost stated (the cable to be confirmed with Shep before the measured runs); the direct loop first, then the pipeline; two SPSC rings of 512-byte slots per session; a second Logon for a connected identity closed silently |
+| 2026-10-23 | Built (partial) | `include/fixgw/transport.hpp`: socket set-up (non-blocking, `TCP_NODELAY`, optional buffer sizes), a listener and non-blocking accept, a non-blocking connect with a check that never blocks, `tcp_connection` (reads what has arrived; writes go to the kernel at once and whatever it will not take is kept, in order, and sent first by `flush`; past a bound, default 4 MB, `write` reports the counterparty as not reading), `backoff` (at once, then 1 s doubling to 30 s, reset on logon). `tests/transport_test.cpp`: a journaled initiator and a plain acceptor over loopback TCP, buffers of 128 KB, reads of 97 bytes: 20,000 orders in a burst arrive intact and in order with up to 2 MB kept for the kernel, and 20,000 ExecutionReports the other way; the counterparty drops the connection, it is seen, the initiator reconnects, logs on with its numbers continuing and the next order arrives; connecting to nothing fails; the backoff schedule; a counterparty that never reads trips the bound. Found on the way, both in the test, not the transport: buffers of 4 KB stalled the transfer, because loopback's ~64 KB segments never fit the window and TCP fell back to its zero-window probes; and a burst of 3,000 sometimes fitted wholly in the kernel's buffers (Linux doubles what is asked), leaving nothing to keep, so the burst is now 20,000 (30 runs, none failing). A mutant letting new bytes overtake kept ones broke S1. Clean under ASan and UBSan and TSan; aarch64 compiles |
