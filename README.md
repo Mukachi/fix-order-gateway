@@ -39,3 +39,7 @@ Ns per call, range over 3 runs, clock cost included (about the empty window's p5
 
 Order arrival to release of its bytes, ns, at 1,000 orders a second, range over 3 runs. Every rate, the guarantees and the conditions: [RESULTS.md](RESULTS.md).
 <!-- /results -->
+
+<!-- results:net-summary -->
+Transport figures: not yet measured (design note 005).
+<!-- /results -->
