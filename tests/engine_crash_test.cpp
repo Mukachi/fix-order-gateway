@@ -125,12 +125,11 @@ void submit_rest(app_ring& in, int from, int doorbell) {
         journal_reader r;
         if (!r.open(path) || !r.cut() || !f.open_append(path, r.valid_end(), prefill)) ::_exit(16);
     }
-    const int fd = connect_start(port);
-    for (int k = 0; k < 2000 && connect_check(fd) == connect_status::in_progress; ++k) ::usleep(1000);
-    if (connect_check(fd) != connect_status::connected) ::_exit(17);
     quiet q;
     auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
-    pipeline_engine<quiet> p(ours(), f, q, *in, *out, fd);
+    engine_config ec;
+    ec.port = port;
+    pipeline_engine<quiet> p(ours(), ec, f, q, *in, *out);
     p.on_durable([](void*, std::size_t end) { report(end); }, nullptr);
     if (recovering) {
         journal_reader r;
@@ -139,6 +138,7 @@ void submit_rest(app_ring& in, int from, int doorbell) {
     const int before = recovering ? submitted_before(path) : 0;
     std::atomic<bool> stop{false};
     std::thread t([&] { p.run(stop); });
+    for (int k = 0; k < 2000 && !p.connected(); ++k) ::usleep(1000);
     submit_rest(*in, before, -1);
     stop = true;
     t.join();

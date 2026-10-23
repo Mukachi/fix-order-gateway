@@ -115,17 +115,16 @@ void direct(const std::string& dir) {
 void pipeline(const std::string& dir) {
     tcp_listener l;
     l.open(0);
-    const int c = connect_start(l.port());
     journal_file f;
     f.create(dir + "/pipeline.journal", 1, 8u << 20);
     yes y;
     auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
     std::atomic<bool> stop{false};
     std::unique_ptr<pipeline_engine<yes>> p;
+    engine_config ec;
+    ec.port = l.port();
     std::thread t([&] {
-        for (int k = 0; k < 5'000'000 && connect_check(c) == connect_status::in_progress; ++k) {
-        }
-        p = std::make_unique<pipeline_engine<yes>>(client(), f, y, *in, *out, c);
+        p = std::make_unique<pipeline_engine<yes>>(client(), ec, f, y, *in, *out);
         p->run(stop);  // the session stage here, the journal and sender stages on threads of its own
     });
     engine_allocations = 0;
