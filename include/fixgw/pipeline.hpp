@@ -86,12 +86,13 @@ private:
 // input reached. Bytes longer than a chunk travel in several.
 struct stage_chunk {
     // attach and close carry a socket in `data` and are not outputs (position 0).
-    enum : std::uint8_t { bytes = 1, message = 2, replayed = 3, disconnect = 4, attach = 5, close = 6 };
+    enum : std::uint8_t { bytes = 1, message = 2, replayed = 3, disconnect = 4, attach = 5, close = 6, event = 7 };
     std::uint64_t position;
     std::uint8_t kind;
     bool last;  // a message's final chunk
     std::uint16_t length;
-    char data[500];
+    std::uint8_t slot_kind;  // event: the application slot kind
+    char data[499];
 };
 static_assert(sizeof(stage_chunk) == 512, "a stage chunk is 512 bytes");
 using stage_ring = lfipc::spsc_ring<stage_chunk, 8192>;
@@ -106,8 +107,8 @@ public:
     // `file`: the journal, open at its end; `cfg`: where to connect (its wait
     // mode is not used: every stage busy-polls).
     pipeline_engine(const session_config& s, const engine_config& cfg, journal_file& file, Policy& policy, app_ring& in,
-                    app_ring& out, cpus c = {})
-        : cfg_(cfg), journal_(file), tagged_{*this}, us_(s, journal_, tagged_, policy), in_(in), out_(out), cpus_(c),
+                    app_ring& out, cpus c = {}, const order_config& orders = {})
+        : cfg_(cfg), journal_(file), tagged_{*this}, us_(s, journal_, tagged_, policy, orders), in_(in), out_(out), cpus_(c),
           ring_(std::make_unique<stage_ring>()) {
         inbox_.reserve(64u << 10);
     }
@@ -118,6 +119,8 @@ public:
     void on_durable(void (*f)(void*, std::size_t), void* ctx) noexcept { journal_.on_durable(f, ctx); }
     // Whether the session is logged on: safe from any thread.
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
+    // The application asked to log out, and the connection is gone (session stage).
+    bool finished() const noexcept { return logging_out_ && rfd_ < 0 && connecting_ < 0; }
 
     // Runs the three stages until `stop`; this thread is the session stage.
     void run(const std::atomic<bool>& stop) {
@@ -133,9 +136,9 @@ public:
         });
         if (cpus_.session >= 0) lfipc::bench::detail::pin_to(cpus_.session);
         if (recovered_) us_.on_disconnected(clock_now());  // the old connection died with the old process
-        while (!stop.load(std::memory_order_relaxed)) {
+        while (!stop.load(std::memory_order_relaxed) && !finished()) {
             const session_time now = clock_now();
-            if (rfd_ < 0) connect(now);
+            if (rfd_ < 0 && !logging_out_) connect(now);
             if (rfd_ >= 0) {
                 char buf[16 << 10];
                 ssize_t n;
@@ -144,8 +147,18 @@ public:
                 if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) lost(now);
             }
             app_slot slot;
-            while (in_.try_pop(slot))
-                us_.send(std::string_view(slot.type, slot.type_length), std::string_view(slot.data, slot.length), now);
+            while (in_.try_pop(slot)) {
+                if (slot.kind == app_slot::logout) {
+                    us_.logout("", now);
+                    logging_out_ = true;
+                    continue;
+                }
+                const std::string_view body(slot.data, slot.length);
+                if (us_.send(std::string_view(slot.type, slot.type_length), body, now) == send_result::refused) {
+                    const order_event e = refusal_event(body, us_.last_refusal());  // via the sender, the ring's one producer
+                    put(stage_chunk::event, std::string_view(reinterpret_cast<const char*>(&e), sizeof(e)), app_slot::refused);
+                }
+            }
             us_.on_tick(now);
             const bool up = rfd_ >= 0 && us_.state().state() == session_state::active;
             if (up) backoff_.reset();
@@ -167,13 +180,19 @@ private:
             e.put(replayed ? stage_chunk::replayed : stage_chunk::message, m.substr(0, sizeof(app_slot::data)));
         }
         void disconnect() { e.put(stage_chunk::disconnect, {}); }
+        void order_update(const order_event& ev, bool replayed) {
+            e.put(stage_chunk::event, std::string_view(reinterpret_cast<const char*>(&ev), sizeof(ev)),
+                  replayed ? app_slot::replayed_state : app_slot::order_state);
+        }
     };
-    void put(std::uint8_t kind, std::string_view b) {
+    // `slot_kind`: for an event, the application slot it becomes.
+    void put(std::uint8_t kind, std::string_view b, std::uint8_t slot_kind = 0) {
         const std::uint64_t pos = journal_.end();
         do {
             stage_chunk c;
             c.position = pos;
             c.kind = kind;
+            c.slot_kind = slot_kind;
             c.length = static_cast<std::uint16_t>(b.size() < sizeof(c.data) ? b.size() : sizeof(c.data));
             std::memcpy(c.data, b.data(), c.length);
             b.remove_prefix(c.length);
@@ -187,6 +206,7 @@ private:
         stage_chunk c;
         c.position = 0;
         c.kind = kind;
+        c.slot_kind = 0;
         c.last = true;
         c.length = sizeof(fd);
         std::memcpy(c.data, &fd, sizeof(fd));
@@ -265,6 +285,14 @@ private:
                         msg_len = 0;
                     }
                     break;
+                case stage_chunk::event:
+                    msg.kind = c.slot_kind;
+                    msg.type_length = 0;
+                    msg.length = c.length;
+                    std::memcpy(msg.data, c.data, c.length);
+                    while (!out_.try_push(msg)) {
+                    }
+                    break;
                 case stage_chunk::disconnect:
                     shut();
                     break;
@@ -298,7 +326,7 @@ private:
     backoff backoff_;
     std::string inbox_;
     std::atomic<bool> connected_{false};
-    bool recovered_ = false;
+    bool recovered_ = false, logging_out_ = false;
 };
 
 }  // namespace fixgw

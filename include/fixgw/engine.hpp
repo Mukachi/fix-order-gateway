@@ -25,9 +25,19 @@
 
 namespace fixgw {
 
-// One slot of the application's rings: 512 bytes (D5).
+// One slot of the application's rings: 512 bytes (D5). Note 007 adds the
+// order's state behind each ExecutionReport and OrderCancelReject, a request
+// refused before it left, and the application's logout.
 struct app_slot {
-    enum : std::uint8_t { order = 1, message = 2, replayed = 3 };
+    enum : std::uint8_t {
+        order = 1,           // to the engine: an application message (D, F, G, ...)
+        message = 2,         // from: a message as received
+        replayed = 3,        // from: a message replayed in recovery
+        order_state = 4,     // from: an order_event (its state, or not sent), in `data`
+        replayed_state = 5,  // from: the same, in recovery
+        refused = 6,         // from: an order_event: a request refused before it left
+        logout = 7,          // to the engine: log out, do not reconnect, then stop
+    };
     std::uint8_t kind;
     std::uint8_t type_length;  // order: its MsgType's length
     std::uint16_t length;      // bytes of `data` in use
@@ -59,6 +69,52 @@ inline bool submit_order(app_ring& ring, std::string_view msg_type, std::string_
     return true;
 }
 
+// The application's logout: the session logs out, the engine does not
+// reconnect and its run ends once disconnected (note 007).
+inline bool submit_logout(app_ring& ring, int doorbell = -1) {
+    app_slot s;
+    s.kind = app_slot::logout;
+    s.type_length = 0;
+    s.length = 0;
+    if (!ring.try_push(s)) return false;
+    if (doorbell >= 0) {
+        const std::uint64_t one = 1;
+        if (::write(doorbell, &one, sizeof(one)) < 0) {
+        }
+    }
+    return true;
+}
+
+// An order event as a slot, and back.
+inline app_slot event_slot(const order_event& e, std::uint8_t kind) noexcept {
+    app_slot s;
+    s.kind = kind;
+    s.type_length = 0;
+    s.length = sizeof(e);
+    std::memcpy(s.data, &e, sizeof(e));
+    return s;
+}
+inline order_event slot_event(const app_slot& s) noexcept {
+    order_event e;
+    std::memcpy(&e, s.data, sizeof(e));
+    return e;
+}
+static_assert(sizeof(order_event) <= sizeof(app_slot::data), "an order event fits a slot");
+
+// What the application learns of a request the gateway refused.
+inline order_event refusal_event(std::string_view body, const order_book::verdict& v) noexcept {
+    order_event e{};
+    e.kind = order_event::refused;
+    const std::string_view id = detail::body_field(body, 11).value_or("");
+    e.id_length = static_cast<std::uint8_t>(id.size() < sizeof(e.cl_ord_id) ? id.size() : sizeof(e.cl_ord_id));
+    std::memcpy(e.cl_ord_id, id.data(), e.id_length);
+    const std::string_view why = v.ok ? std::string_view("the session is not taking messages") : std::string_view(v.why);
+    e.reason_length = static_cast<std::uint8_t>(why.size() < sizeof(e.reason) ? why.size() : sizeof(e.reason));
+    std::memcpy(e.reason, why.data(), e.reason_length);
+    e.retry_at_ns = v.retry_at_ns;
+    return e;
+}
+
 enum class wait_mode { busy, block, spin_then_block };
 
 inline session_time clock_now() noexcept {
@@ -81,8 +137,8 @@ template <class Strategy, class Policy>
 class engine {
 public:
     engine(const session_config& session, const engine_config& cfg, Strategy& journal, Policy& policy, app_ring& in,
-           app_ring& out)
-        : cfg_(cfg), out_adapter_{*this}, us_(session, journal, out_adapter_, policy), in_(in), out_(out),
+           app_ring& out, const order_config& orders = {})
+        : cfg_(cfg), out_adapter_{*this}, us_(session, journal, out_adapter_, policy, orders), in_(in), out_(out),
           initiator_(session.role == session_role::initiator) {
         doorbell_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
         epoll_ = ::epoll_create1(EPOLL_CLOEXEC);
@@ -104,6 +160,8 @@ public:
     // Whether a connection is up: safe from any thread (the connection itself
     // is the engine thread's alone).
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
+    // The application asked to log out, and the connection is gone.
+    bool finished() const noexcept { return logging_out_ && !conn_.open() && connecting_ < 0; }
 
     // Recovery before the loop starts (note 004): every message replayed goes
     // to the application's ring marked replayed.
@@ -121,7 +179,7 @@ public:
     // moved anything (the spin_then_block mode counts from the last such pass).
     bool step(session_time now) {
         bool moved = false;
-        if (initiator_ && !conn_.open()) moved |= try_connect(now);
+        if (initiator_ && !conn_.open() && !logging_out_) moved |= try_connect(now);
         if (connecting_ >= 0) moved |= finish_connect(now);
         if (conn_.open() && connecting_ < 0) {
             char buf[16 << 10];
@@ -135,8 +193,15 @@ public:
         }
         app_slot s;
         while (in_.try_pop(s)) {
-            us_.send(std::string_view(s.type, s.type_length), std::string_view(s.data, s.length), now);
             moved = true;
+            if (s.kind == app_slot::logout) {
+                us_.logout("", now);
+                logging_out_ = true;
+                continue;
+            }
+            const std::string_view body(s.data, s.length);
+            if (us_.send(std::string_view(s.type, s.type_length), body, now) == send_result::refused)
+                push_out(event_slot(refusal_event(body, us_.last_refusal()), app_slot::refused));
         }
         us_.on_tick(now);
         us_.poll(now);
@@ -150,7 +215,7 @@ public:
     // Runs until `stop`; waits between passes as configured (D1).
     void run(const std::atomic<bool>& stop) {
         std::int64_t last_activity = clock_now().mono_ns;
-        while (!stop.load(std::memory_order_relaxed)) {
+        while (!stop.load(std::memory_order_relaxed) && !finished()) {
             const session_time now = clock_now();
             if (step(now)) last_activity = now.mono_ns;
             if (cfg_.wait == wait_mode::busy) continue;
@@ -166,6 +231,9 @@ private:
             if (!e.conn_.write(b)) e.not_reading_ = true;
         }
         void deliver(std::string_view m, bool replayed) { e.to_application(m, replayed); }
+        void order_update(const order_event& ev, bool replayed) {
+            e.push_out(event_slot(ev, replayed ? app_slot::replayed_state : app_slot::order_state));
+        }
         void disconnect() { e.conn_.close(); }
     };
 
@@ -223,6 +291,9 @@ private:
         const std::size_t n = m.size() < sizeof(s.data) ? m.size() : sizeof(s.data);  // longer: cut (D5)
         s.length = static_cast<std::uint16_t>(n);
         std::memcpy(s.data, m.data(), n);
+        push_out(s);
+    }
+    void push_out(const app_slot& s) {
         if (overflow_.empty() && out_.try_push(s)) return;
         overflow_.push_back(s);  // the application is behind: kept in order, never dropped
     }
@@ -254,7 +325,7 @@ private:
     app_ring& out_;
     bool initiator_;
     int connecting_ = -1, doorbell_ = -1, epoll_ = -1;
-    bool not_reading_ = false;
+    bool not_reading_ = false, logging_out_ = false;
     std::atomic<bool> connected_{false};
     backoff backoff_;
     std::string inbox_;

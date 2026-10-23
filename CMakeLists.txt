@@ -78,7 +78,7 @@ target_include_directories(lfipc SYSTEM INTERFACE ${lockfree_ipc_SOURCE_DIR}/inc
 target_compile_definitions(lfipc INTERFACE FIXGW_LFIPC_COMMIT="${FIXGW_LFIPC_COMMIT}")
 add_dependencies(lfipc build_info)
 
-foreach(t conformance_test framing_test decode_test encode_test representation_a_test simd_equivalence_test session_test journal_test recovery_test durability_test crash_test transport_test acceptor_gate_test engine_test pipeline_test engine_crash_test engine_alloc_test)
+foreach(t conformance_test orders_test framing_test decode_test encode_test representation_a_test simd_equivalence_test session_test journal_test recovery_test durability_test crash_test transport_test acceptor_gate_test engine_test pipeline_test engine_crash_test engine_alloc_test)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE fixgw lfipc Threads::Threads)  # the engine uses lockfree-ipc's rings
   add_test(NAME ${t} COMMAND ${t})

@@ -30,7 +30,9 @@ void pipeline_round_trips(const std::string& dir, bool drop_midway) {
     auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
     engine_config ec;
     ec.port = l.port();
-    pipeline_engine<yes> p(client(), ec, file, y, *in, *out);
+    order_config oc;
+    oc.stale_ns = 60'000'000'000;  // reconnection, not D5: a slow reconnect (backoff) must not make orders stale
+    pipeline_engine<yes> p(client(), ec, file, y, *in, *out, {}, oc);
     std::atomic<bool> stop{false};
     std::thread t([&] { p.run(stop); });
 

@@ -33,7 +33,9 @@ void run_mode(wait_mode mode, bool drop_midway) {
     memory_journal j;
     yes y;
     auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
-    engine<memory_journal, yes> e(client(), ec, j, y, *in, *out);
+    order_config oc;
+    oc.stale_ns = 60'000'000'000;  // reconnection, not D5: a slow reconnect (backoff) must not make orders stale
+    engine<memory_journal, yes> e(client(), ec, j, y, *in, *out, oc);
     std::atomic<bool> stop{false};
     std::thread t([&] { e.run(stop); });
 

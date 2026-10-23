@@ -23,6 +23,7 @@
 
 #include <fixgw/durability.hpp>
 #include <fixgw/journal.hpp>
+#include <fixgw/orders.hpp>
 #include <fixgw/session.hpp>
 
 #include <cstddef>
@@ -65,6 +66,10 @@ private:
 };
 
 // The session's sink: holds its outputs until the input behind them is durable.
+// With an order book (note 007), it passes each ExecutionReport and
+// OrderCancelReject through it, dropping duplicates (D3) and putting the
+// order's state right behind the message, and asks it before a resend or the
+// release of a queued message (D5).
 template <class Policy>
 class held_sink {
 public:
@@ -73,24 +78,61 @@ public:
         delivered_.reserve(1u << 20);
         ends_.reserve(4096);
     }
+    void attach(order_book* b) noexcept { book_ = b; }
+    void at(session_time t) noexcept { now_ = t; }
+
     void write(std::string_view b) { out_.insert(out_.end(), b.begin(), b.end()); }
     void disconnect() { disconnect_ = true; }
     void deliver(const message_view<>& m) {  // copied: the view lasts only the call
-        const std::string_view b = m.bytes();
-        delivered_.insert(delivered_.end(), b.begin(), b.end());
-        ends_.push_back(delivered_.size());
+        order_event e;
+        const std::string_view t = m.msg_type();
+        const bool report = book_ && (t == "8" || t == "9");
+        if (report && !book_->inbound(m, e)) {
+            policy_.log(session_log::info, "ExecutionReport already seen (ExecID): discarded", 0);
+            return;
+        }
+        push(item::message, m.bytes());
+        if (report) {
+            if (e.inconsistent) policy_.log(session_log::warning, e.why(), 0);
+            push_event(e);
+        }
     }
     void log(session_log l, std::string_view what, std::uint64_t seq) { policy_.log(l, what, seq); }
-    bool resend(const message_view<>& m) { return policy_.resend(m); }
-    bool release(std::string_view t, std::string_view b) { return policy_.release(t, b); }
+    bool resend(const message_view<>& m) {
+        if (book_) {
+            order_event e;
+            if (!book_->may_resend(m.msg_type(), m.get(11).value_or(""), now_, e)) {
+                push_event(e);
+                return false;
+            }
+        }
+        return policy_.resend(m);
+    }
+    bool release(std::string_view t, std::string_view b) {
+        if (book_) {
+            order_event e;
+            if (!book_->may_resend(t, detail::body_field(b, 11).value_or(""), now_, e)) {
+                push_event(e);
+                return false;
+            }
+        }
+        return policy_.release(t, b);
+    }
 
     bool empty() const noexcept { return out_.empty() && ends_.empty() && !disconnect_; }
     template <class Out>
     void release_to(Out& out, bool replayed) {
         if (!replayed && !out_.empty()) out.write(std::string_view(out_.data(), out_.size()));
         std::size_t from = 0;
-        for (const std::size_t end : ends_) {
-            out.deliver(std::string_view(delivered_.data() + from, end - from), replayed);
+        for (const auto& [kind, end] : ends_) {
+            const std::string_view bytes(delivered_.data() + from, end - from);
+            if (kind == item::message) {
+                out.deliver(bytes, replayed);
+            } else if constexpr (requires(order_event ev) { out.order_update(ev, replayed); }) {
+                order_event ev;
+                std::memcpy(&ev, bytes.data(), sizeof(ev));
+                out.order_update(ev, replayed);
+            }
             from = end;
         }
         if (!replayed && disconnect_) out.disconnect();
@@ -104,20 +146,34 @@ public:
     }
 
 private:
+    enum class item : std::uint8_t { message, event };
+    void push(item k, std::string_view b) {
+        delivered_.insert(delivered_.end(), b.begin(), b.end());
+        ends_.push_back({k, delivered_.size()});
+    }
+    void push_event(const order_event& e) { push(item::event, std::string_view(reinterpret_cast<const char*>(&e), sizeof(e))); }
+
     Policy& policy_;
+    order_book* book_ = nullptr;
+    session_time now_{};
     std::vector<char> out_, delivered_;
-    std::vector<std::size_t> ends_;
+    std::vector<std::pair<item, std::size_t>> ends_;
     bool disconnect_ = false;
 };
 
 template <class Strategy, class Out, class Policy>
 class journaled_session {
 public:
-    journaled_session(const session_config& cfg, Strategy& journal, Out& out, Policy& policy)
-        : journal_(journal), out_(out), held_(policy), session_(cfg, held_, store_) {}
+    journaled_session(const session_config& cfg, Strategy& journal, Out& out, Policy& policy, const order_config& orders = {})
+        : journal_(journal), out_(out), held_(policy), session_(cfg, held_, store_), book_(orders) {
+        held_.attach(&book_);
+    }
 
     const session<held_sink<Policy>, memory_store>& state() const noexcept { return session_; }
     const memory_store& store() const noexcept { return store_; }
+    const order_book& orders() const noexcept { return book_; }
+    // Why the last send was refused by the order book (note 007), if it was.
+    const order_book::verdict& last_refusal() const noexcept { return refusal_; }
     bool failed() const noexcept { return failed_; }
     bool holding() const noexcept { return pending_; }
 
@@ -128,26 +184,34 @@ public:
     }
 
     void on_connected(session_time t) {
+        held_.at(t);
         session_.on_connected(t);
         commit(record_kind::connected, t);
     }
     void on_disconnected(session_time t) {
+        held_.at(t);
         session_.on_disconnected(t);
         commit(record_kind::disconnected, t);
     }
     std::size_t on_bytes(const char* p, std::size_t n, session_time t) {
+        held_.at(t);
         const std::size_t used = session_.on_bytes(p, n, t);
         if (used > 0) commit(record_kind::bytes, t, std::string_view(p, used));  // exactly what was consumed
         return used;
     }
     void on_tick(session_time t) {  // D2: journaled only if it did something
         const auto before = snapshot();
+        held_.at(t);
         session_.on_tick(t);
         if (!held_.empty() || snapshot() != before) commit(record_kind::tick, t);
     }
     send_result send(std::string_view msg_type, std::string_view body, session_time t) {
+        held_.at(t);
+        refusal_ = book_.check(msg_type, body, t);  // note 007: D1 and the throttle, D4
+        if (!refusal_.ok) return send_result::refused;
         const send_result r = session_.send(msg_type, body, t);
         if (r != send_result::refused) {
+            book_.record(msg_type, body, t);
             char prefix[1 + 3];
             prefix[0] = static_cast<char>(msg_type.size());
             std::memcpy(prefix + 1, msg_type.data(), msg_type.size());
@@ -156,6 +220,7 @@ public:
         return r;
     }
     void logout(std::string_view why, session_time t) {
+        held_.at(t);
         session_.logout(why, t);
         commit(record_kind::logout, t, why);
     }
@@ -240,6 +305,8 @@ private:
     held_sink<Policy> held_;
     memory_store store_;
     session<held_sink<Policy>, memory_store> session_;
+    order_book book_;
+    order_book::verdict refusal_{true, 0, nullptr};
     bool replaying_ = false, failed_ = false, pending_ = false;
 };
 
