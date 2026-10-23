@@ -5,7 +5,7 @@ Basis: *FIX Session Layer Test Cases*, Version 1.0, June 2020, FIX Protocol Limi
 order. Design: [note 006](docs/design/006-conformance.md). Each result shown by the test lists what it
 checked; a case not shown says why.
 
-85 cases: 1 mandatory not applicable, 1 mandatory note 007, 68 mandatory pass, 13 optional not implemented, 2 optional pass.
+85 cases: 1 mandatory not applicable, 69 mandatory pass, 13 optional not implemented, 2 optional pass.
 
 | Case | Mandatory | Condition | Result | Shown by, or why not |
 |---|---|---|---|---|
@@ -91,6 +91,65 @@ checked; a case not shown says why.
 | 17j | no | Encryption | not implemented | encryption is optional; EncryptMethod must be 0, any other is an invalid Logon (1B d, 1S d) |
 | 18a | no | Third-party addressing, as expected | not implemented | optional; OnBehalfOfCompID and DeliverToCompID are accepted as header fields, not checked |
 | 18b | no | Third-party addressing, not as expected | not implemented | optional; OnBehalfOfCompID and DeliverToCompID are accepted as header fields, not checked |
-| 19a | yes | PossResend Y, already seen | note 007 | seen or not is decided by message-specific ids (ClOrdID, ExecID), the order state machine's |
+| 19a | yes | PossResend Y, already seen | pass | PossResend Y, the report already seen (its ExecID): not delivered again, its number consumed |
 | 19b | yes | PossResend Y, not seen | pass | PossResend Y, not seen before: accepted and delivered |
 | 20 | yes | ResendRequest while ours is outstanding | pass | their ResendRequest while ours is outstanding: served |
+
+## Order State Change Matrices
+
+FIX 4.4 with Errata 20030618, Volume 4, every matrix in its order; shown by `tests/matrices_test.cpp`
+([note 007](docs/design/007-order-entry.md), D2): *scripted*, the venue's rows sent as the matrix gives them
+and our order's state checked after each; *simulated*, the venue simulator answering our requests, its
+reports checked against the same rows.
+
+47 matrices: 16 out of scope, 31 pass.
+
+| Matrix | Scenario | Result | Shown by, or why not |
+|---|---|---|---|
+| A.1.a | Filled order | pass | scripted, 5 rows, our order's state as the matrix after each; simulated, the venue simulator's 4 reports as the matrix |
+| A.1.b | Part-filled day order, done for day | pass | scripted, 5 rows, our order's state as the matrix after each; simulated, the venue simulator's 4 reports as the matrix |
+| B.1.a | Cancel request for a zero-filled order | pass | scripted, 5 rows, our order's state as the matrix after each; simulated, the venue simulator's 3 reports as the matrix |
+| B.1.b | Cancel request, executions while it is active | pass | scripted, 8 rows, our order's state as the matrix after each; simulated, the venue simulator's 4 reports as the matrix |
+| B.1.c | Cancel request, order filled before it can be accepted | pass | scripted, 8 rows, our order's state as the matrix after each |
+| B.1.d | Cancel request for an order not yet acknowledged | pass | scripted, 9 rows, our order's state as the matrix after each |
+| B.1.e | Cancel request crossing the acknowledgement | pass | scripted, 5 rows, our order's state as the matrix after each |
+| B.1.f | Cancel request for an unknown order | pass | scripted, 1 rows, our order's state as the matrix after each |
+| C.1.a | Replace to raise quantity, zero-filled | pass | scripted, 7 rows, our order's state as the matrix after each; simulated, the venue simulator's 5 reports as the matrix |
+| C.1.b | Replace to raise quantity, fill while pending | pass | scripted, 8 rows, our order's state as the matrix after each |
+| C.1.c | Replace to raise quantity of a filled order | pass | scripted, 7 rows, our order's state as the matrix after each; simulated, the venue simulator's 5 reports as the matrix |
+| C.2.a | Replace, not for quantity, rejected after a fill | pass | scripted, 6 rows, our order's state as the matrix after each |
+| C.3.a | Replace to lower quantity, above CumQty | pass | scripted, 9 rows, our order's state as the matrix after each |
+| C.3.b | Replace to lower quantity, equal to CumQty | pass | scripted, 5 rows, our order's state as the matrix after each |
+| C.3.c | Replace to lower quantity, below CumQty | pass | scripted, 5 rows, our order's state as the matrix after each; simulated, the venue simulator's 4 reports as the matrix |
+| D.1.a | Two replaces, both accepted | pass | scripted, 13 rows, our order's state as the matrix after each |
+| D.1.b | Replace rejected before pending, then another | pass | scripted, 11 rows, our order's state as the matrix after each |
+| D.1.c | Replace rejected after pending, then another | pass | scripted, 12 rows, our order's state as the matrix after each |
+| D.2.a | Chained replaces, processed in turn | pass | scripted, 10 rows, our order's state as the matrix after each |
+| D.2.b | Chained replaces, pending acknowledged first | pass | scripted, 10 rows, our order's state as the matrix after each |
+| D.2.c | Chained replaces, both rejected | pass | scripted, 10 rows, our order's state as the matrix after each |
+| D.2.d | Chained replaces, second rejected while pending | pass | scripted, 9 rows, our order's state as the matrix after each |
+| E.1.a | Telephoned order | out of scope | an order the gateway did not send; its reports are delivered marked unknown |
+| E.1.b | Unsolicited cancel of a part-filled order (what cancel-on-disconnect produces) | pass | scripted, 4 rows, our order's state as the matrix after each |
+| E.1.c | Unsolicited replacement | out of scope | changes agreed by telephone (D2) |
+| E.1.d | Unsolicited reduction of quantity | out of scope | changes agreed by telephone or by an ECN decline (D2) |
+| E.1.e | Unsolicited cancel of a cancel-if-not-best order | out of scope | ExecInst Z, not used (D2) |
+| F.1.a | Order rejected, duplicate ClOrdID | pass | scripted, 4 rows, our order's state as the matrix after each; simulated, a ClOrdID again without PossResend: Rejected, OrdRejReason 6, the first order's status and quantity |
+| F.1.b | PossResend and duplicate ClOrdID | pass | scripted, 4 rows, our order's state as the matrix after each; simulated, a ClOrdID again with PossResend: an OrderStatus report of the order, not a new order |
+| F.1.c | Order rejected, already submitted verbally | out of scope | telephoned orders (D2) |
+| G.1.a | Order status requests | out of scope | needs OrderStatusRequest, not among the five messages (D2) |
+| G.1.b | Order status requests | out of scope | needs OrderStatusRequest, not among the five messages (D2) |
+| G.1.c | Order status requests | out of scope | needs OrderStatusRequest, not among the five messages (D2) |
+| H.1.a | GT orders over several days | out of scope | GT orders and corporate actions (D2) |
+| H.1.b | GT orders over several days | out of scope | GT orders and corporate actions (D2) |
+| H.1.c | GT orders over several days | out of scope | GT orders and corporate actions (D2) |
+| H.1.d | GT orders over several days | out of scope | GT orders and corporate actions (D2) |
+| I.1.a | Fill or Kill that cannot be filled | pass | scripted, 3 rows, our order's state as the matrix after each; simulated, the venue simulator's 2 reports as the matrix |
+| I.1.b | Immediate or Cancel that cannot be immediately hit | pass | scripted, 4 rows, our order's state as the matrix after each; simulated, the venue simulator's 3 reports as the matrix |
+| J.1.a | Filled order, executions corrected and canceled | pass | scripted, 12 rows, our order's state as the matrix after each |
+| J.1.b | Canceled order, an execution busted, a new one | pass | scripted, 8 rows, our order's state as the matrix after each |
+| J.1.c | GT order renewed, quantities corrected | pass | scripted, 8 rows, our order's state as the matrix after each |
+| J.1.d | Done for day, a correction and a bust | pass | scripted, 6 rows, our order's state as the matrix after each |
+| K.1.a | Trading halt | out of scope | trading halts (D2) |
+| K.1.b | Trading halt | out of scope | trading halts (D2) |
+| L.1.a | Guarantee of execution (Stopped) | out of scope | stopped orders (D2) |
+| L.1.b | CashOrderQty | out of scope | orders by cash amount (D2) |

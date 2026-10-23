@@ -78,7 +78,7 @@ target_include_directories(lfipc SYSTEM INTERFACE ${lockfree_ipc_SOURCE_DIR}/inc
 target_compile_definitions(lfipc INTERFACE FIXGW_LFIPC_COMMIT="${FIXGW_LFIPC_COMMIT}")
 add_dependencies(lfipc build_info)
 
-foreach(t conformance_test orders_test framing_test decode_test encode_test representation_a_test simd_equivalence_test session_test journal_test recovery_test durability_test crash_test transport_test acceptor_gate_test engine_test pipeline_test engine_crash_test engine_alloc_test)
+foreach(t conformance_test orders_test matrices_test framing_test decode_test encode_test representation_a_test simd_equivalence_test session_test journal_test recovery_test durability_test crash_test transport_test acceptor_gate_test engine_test pipeline_test engine_crash_test engine_alloc_test)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE fixgw lfipc Threads::Threads)  # the engine uses lockfree-ipc's rings
   add_test(NAME ${t} COMMAND ${t})
@@ -171,7 +171,7 @@ target_compile_definitions(codec_bench PRIVATE LFIPC_RESULTS_DIR="${CMAKE_SOURCE
 # Conformance shown case by case (note 006): a stale CONFORMANCE.md, or a case
 # the test does not show, fails the suite.
 add_test(NAME conformance_check COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/run.py conformance --check
-                                       --test $<TARGET_FILE:conformance_test>)
+                                       --test $<TARGET_FILE:conformance_test> --matrices $<TARGET_FILE:matrices_test>)
 
 # One number everywhere: a stale RESULTS.md or README figure fails the suite.
 if(Python3_FOUND)

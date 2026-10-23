@@ -5,7 +5,10 @@
 // conformance` builds CONFORMANCE.md from them. Spec: docs/design/006-conformance.md
 #include "fix_text.hpp"
 
+#include "venue.hpp"
+
 #include <fixgw/acceptor_gate.hpp>
+#include <fixgw/recovery.hpp>
 #include <fixgw/session.hpp>
 #include <fixgw/transport.hpp>
 
@@ -586,6 +589,32 @@ void scenario_14m() {
     }
 }
 
+void scenario_19a() {
+    // The order book (note 007, D3) behind the session: a report whose ExecID
+    // was seen is not delivered again, PossResend or not.
+    struct out_t {
+        std::vector<std::string> delivered;
+        void write(std::string_view) {}
+        void deliver(std::string_view m, bool) { delivered.emplace_back(m); }
+        void disconnect() {}
+    } out;
+    test::memory_journal j;
+    test::yes y;
+    order_config oc;
+    oc.max_orders = 64;
+    oc.max_exec_ids = 256;
+    oc.id_bytes = 4096;
+    journaled_session<test::memory_journal, out_t, test::yes> us(initiator_config(), j, out, y, oc);
+    const auto feed = [&](const std::string& m) { us.on_bytes(m.data(), m.size(), at(0)); };
+    us.on_connected(at(0));
+    feed(venue("A", 1, "98=0|108=30|"));
+    us.send("D", test::soh(test::order_fields("O1")), at(0));
+    feed(venue("8", 2, test::report_fields("O1", "E1")));
+    feed(venue("8", 3, "97=Y|" + test::report_fields("O1", "E1")));
+    check(out.delivered.size() == 1 && us.state().next_expected() == 4,
+          "19a: PossResend Y, the report already seen (its ExecID): not delivered again, its number consumed");
+}
+
 void scenario_15_optional() {
     logged_on f;
     f.feed(test::message("35=0|52=20261021-07:30:00.000|34=2|56=CLIENT|49=VENUE|"));
@@ -632,6 +661,7 @@ int main() {
     scenarios_12_13();
     scenario_14();
     scenario_14m();
+    scenario_19a();
     scenario_15_optional();
     scenarios_16_19_20();
     return test::result();

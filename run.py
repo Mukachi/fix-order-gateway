@@ -485,16 +485,52 @@ CASES = [
      "not implemented: optional; OnBehalfOfCompID and DeliverToCompID are accepted as header fields, not checked"),
     ("18b", False, "Third-party addressing, not as expected",
      "not implemented: optional; OnBehalfOfCompID and DeliverToCompID are accepted as header fields, not checked"),
-    ("19a", True, "PossResend Y, already seen",
-     "note 007: seen or not is decided by message-specific ids (ClOrdID, ExecID), the order state machine's"),
+    ("19a", True, "PossResend Y, already seen"),
     ("19b", True, "PossResend Y, not seen"),
     ("20", True, "ResendRequest while ours is outstanding"),
 ]
+# FIX 4.4 Volume 4's Order State Change Matrices (note 007, D2): those in scope
+# are shown by tests/matrices_test.cpp; the others say why not.
+MATRICES = [
+    ("A.1.a", "Filled order"), ("A.1.b", "Part-filled day order, done for day"),
+    ("B.1.a", "Cancel request for a zero-filled order"), ("B.1.b", "Cancel request, executions while it is active"),
+    ("B.1.c", "Cancel request, order filled before it can be accepted"),
+    ("B.1.d", "Cancel request for an order not yet acknowledged"),
+    ("B.1.e", "Cancel request crossing the acknowledgement"),
+    ("B.1.f", "Cancel request for an unknown order"),
+    ("C.1.a", "Replace to raise quantity, zero-filled"), ("C.1.b", "Replace to raise quantity, fill while pending"),
+    ("C.1.c", "Replace to raise quantity of a filled order"), ("C.2.a", "Replace, not for quantity, rejected after a fill"),
+    ("C.3.a", "Replace to lower quantity, above CumQty"), ("C.3.b", "Replace to lower quantity, equal to CumQty"),
+    ("C.3.c", "Replace to lower quantity, below CumQty"),
+    ("D.1.a", "Two replaces, both accepted"), ("D.1.b", "Replace rejected before pending, then another"),
+    ("D.1.c", "Replace rejected after pending, then another"), ("D.2.a", "Chained replaces, processed in turn"),
+    ("D.2.b", "Chained replaces, pending acknowledged first"), ("D.2.c", "Chained replaces, both rejected"),
+    ("D.2.d", "Chained replaces, second rejected while pending"),
+    ("E.1.a", "Telephoned order", "out of scope: an order the gateway did not send; its reports are delivered marked unknown"),
+    ("E.1.b", "Unsolicited cancel of a part-filled order (what cancel-on-disconnect produces)"),
+    ("E.1.c", "Unsolicited replacement", "out of scope: changes agreed by telephone (D2)"),
+    ("E.1.d", "Unsolicited reduction of quantity", "out of scope: changes agreed by telephone or by an ECN decline (D2)"),
+    ("E.1.e", "Unsolicited cancel of a cancel-if-not-best order", "out of scope: ExecInst Z, not used (D2)"),
+    ("F.1.a", "Order rejected, duplicate ClOrdID"), ("F.1.b", "PossResend and duplicate ClOrdID"),
+    ("F.1.c", "Order rejected, already submitted verbally", "out of scope: telephoned orders (D2)"),
+] + [(f"G.1.{c}", "Order status requests", "out of scope: needs OrderStatusRequest, not among the five messages (D2)") for c in "abc"] + [
+    (f"H.1.{c}", "GT orders over several days", "out of scope: GT orders and corporate actions (D2)") for c in "abcd"] + [
+    ("I.1.a", "Fill or Kill that cannot be filled"), ("I.1.b", "Immediate or Cancel that cannot be immediately hit"),
+    ("J.1.a", "Filled order, executions corrected and canceled"), ("J.1.b", "Canceled order, an execution busted, a new one"),
+    ("J.1.c", "GT order renewed, quantities corrected"), ("J.1.d", "Done for day, a correction and a bust"),
+] + [(f"K.1.{c}", "Trading halt", "out of scope: trading halts (D2)") for c in "ab"] + [
+    ("L.1.a", "Guarantee of execution (Stopped)", "out of scope: stopped orders (D2)"),
+    ("L.1.b", "CashOrderQty", "out of scope: orders by cash amount (D2)"),
+]
+MATRIX_LINE = re.compile(r"^(pass|FAIL)  ([A-L]\.\d\.[a-f]): (.*)$")
+
 CONFORMANCE_LINE = re.compile(r"^(pass|FAIL)  (\d+[A-Z]?(?: [a-z])?|\d+[a-z]): (.*)$")
 
 
-def conformance(root, check, test):
+def conformance(root, check, test, matrices_test=None):
     out = subprocess.run([str(test)], capture_output=True, text=True).stdout
+    matrices_test = matrices_test or Path(test).parent / "matrices_test"
+    mout = subprocess.run([str(matrices_test)], capture_output=True, text=True).stdout
     shown, problems = {}, []
     for line in out.splitlines():
         m = CONFORMANCE_LINE.match(line)
@@ -532,6 +568,39 @@ def conformance(root, check, test):
         f"{len(CASES)} cases: {summary}.\n\n"
         "| Case | Mandatory | Condition | Result | Shown by, or why not |\n|---|---|---|---|---|\n"
         + "\n".join(rows) + "\n")
+    mshown = {}
+    for line in mout.splitlines():
+        m = MATRIX_LINE.match(line)
+        if m:
+            mshown.setdefault(m.group(2), []).append((m.group(1) == "pass", m.group(3)))
+    mknown = {c[0] for c in MATRICES}
+    problems += [f"matrices_test prints {k}, which is not in Volume 4's list" for k in mshown if k not in mknown]
+    mrows, mcounts = [], {}
+    for case in MATRICES:
+        cid, title = case[:2]
+        reason = case[2] if len(case) > 2 else None
+        lines = mshown.get(cid, [])
+        if reason and lines:
+            problems.append(f"{cid}: listed out of scope but the test shows it")
+        if not reason and not lines:
+            problems.append(f"{cid}: not shown by matrices_test")
+        if reason:
+            result, detail = "out of scope", reason.split(":", 1)[1].strip()
+        else:
+            result = "pass" if all(ok for ok, _ in lines) else "FAIL"
+            detail = "; ".join(w for _, w in lines)
+        mcounts[result] = mcounts.get(result, 0) + 1
+        mrows.append(f"| {cid} | {title} | {result} | {detail} |")
+    problems += [f"{r.split('|')[1].strip()}: FAIL" for r in mrows if "| FAIL |" in r]
+    msummary = ", ".join(f"{n} {res}" for res, n in sorted(mcounts.items()))
+    text += (
+        "\n## Order State Change Matrices\n\n"
+        "FIX 4.4 with Errata 20030618, Volume 4, every matrix in its order; shown by `tests/matrices_test.cpp`\n"
+        "([note 007](docs/design/007-order-entry.md), D2): *scripted*, the venue's rows sent as the matrix gives them\n"
+        "and our order's state checked after each; *simulated*, the venue simulator answering our requests, its\n"
+        "reports checked against the same rows.\n\n"
+        f"{len(MATRICES)} matrices: {msummary}.\n\n"
+        "| Matrix | Scenario | Result | Shown by, or why not |\n|---|---|---|---|\n" + "\n".join(mrows) + "\n")
     path = root / "CONFORMANCE.md"
     if problems:
         print("conformance: " + "; ".join(problems))
@@ -558,9 +627,10 @@ def main():
     cp.add_argument("--check", action="store_true", help="compare only; exit 1 on any difference")
     cp.add_argument("--root", type=Path, default=Path(__file__).resolve().parent, help=argparse.SUPPRESS)
     cp.add_argument("--test", type=Path, help="the conformance test (default: build/conformance_test)")
+    cp.add_argument("--matrices", type=Path, help="the matrices test (default: beside the conformance test)")
     args = ap.parse_args()
     if args.cmd == "conformance":
-        return conformance(args.root, args.check, args.test or args.root / "build" / "conformance_test")
+        return conformance(args.root, args.check, args.test or args.root / "build" / "conformance_test", args.matrices)
     try:
         return report(args.root, args.check, args.lfipc)
     except ReportError as e:

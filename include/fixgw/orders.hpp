@@ -102,6 +102,8 @@ inline constexpr char new_ = '0', partially_filled = '1', filled = '2', done_for
 inline constexpr bool finished(char s) noexcept {
     return s == filled || s == canceled || s == rejected || s == expired || s == calculated;
 }
+// Finished and cannot be reopened (a filled order can, by a replace raising its quantity).
+inline constexpr bool dead(char s) noexcept { return s == canceled || s == rejected || s == expired; }
 }  // namespace ord_status
 
 // What the application learns about an order besides the venue's messages.
@@ -151,7 +153,10 @@ public:
             const auto orig = detail::body_field(body, 41);
             const std::uint32_t o = orig ? find_id(*orig) : none;
             if (o == none) return {false, 0, "unknown OrigClOrdID"};
-            if (ord_status::finished(orders_[o].status)) return {false, 0, "order already finished"};
+            // A cancel needs a live order; a replace may also raise a filled
+            // order's quantity (matrices C.1.c, J.1.a), so only a dead one refuses it.
+            const char st = orders_[o].status;
+            if (type == "F" ? ord_status::finished(st) : ord_status::dead(st)) return {false, 0, "order already finished"};
         } else if (count_ == orders_size_) {
             return {false, 0, "order capacity reached"};
         }
