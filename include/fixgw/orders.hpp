@@ -220,7 +220,9 @@ public:
         order& n = orders_[o];
         if (type == "9") {
             n.cancel_pending = n.replace_pending = false;  // the request failed; the order stands
-            n.status = out.ord_status;
+            // CxlRejReason 1 (unknown order): FIX 4.4 has OrdStatus say Rejected,
+            // of the request's OrigClOrdID, not of our order, which keeps its own.
+            if (m.get(102) != std::string_view("1")) n.status = out.ord_status;
         } else {
             apply(n, m, out);
             if (out.exec_type == '5' && find_id(id) != none) n.current = id_index(id);  // replaced: the new ClOrdID

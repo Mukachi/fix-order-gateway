@@ -76,6 +76,10 @@ void replace_and_reject() {
     check(send(b, "F", "41=R1|11=C1|55=VOD.L|54=1|60=20261021-07:30:00.000|38=200|"), "D1: a cancel by the new ClOrdID passes");
     inbound rej("35=9|49=VENUE|56=CLIENT|34=9|52=20261021-07:30:00.000|37=X|11=C1|41=R1|39=0|434=1|");
     check(b.inbound(rej.v, e) && e.ord_status == ord_status::new_ && e.exec_type == '9', "D1: an OrderCancelReject: the order stands, New");
+    inbound unknown("35=9|49=VENUE|56=CLIENT|34=9|52=20261021-07:30:00.000|37=NONE|11=C2|41=R1|39=8|434=1|102=1|");
+    send(b, "F", "41=R1|11=C2|55=VOD.L|54=1|60=20261021-07:30:00.000|38=200|");
+    check(b.inbound(unknown.v, e) && status(b, "R1") == ord_status::new_,
+          "D1: an OrderCancelReject for an order the venue does not know (CxlRejReason 1): its Rejected is not our order's");
     check(!send(b, "D", test::order_fields("O1")), "D1: a ClOrdID used before: refused");
     check(!send(b, "F", "41=NOPE|11=C9|55=VOD.L|54=1|60=20261021-07:30:00.000|38=1|"), "D1: an unknown OrigClOrdID: refused");
 }
