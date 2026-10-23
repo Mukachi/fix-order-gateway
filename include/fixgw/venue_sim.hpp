@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -49,6 +50,21 @@ public:
         orders_.push_back(o);
         rest(orders_.size() - 1);
     }
+
+    // The venue's view of the order whose chain includes `cl_ord_id`, if it has one.
+    struct order_view {
+        char status;
+        fixed order_qty, cum, leaves;
+    };
+    std::optional<order_view> state(int session, std::string_view cl_ord_id) const {
+        const auto it = ids_.find({session, std::string(cl_ord_id)});
+        if (it == ids_.end()) return std::nullopt;
+        const order& o = orders_[it->second];
+        return order_view{o.status, o.order_qty, o.cum, o.leaves};
+    }
+    // How many NewOrderSingles arrived for a ClOrdID already known, without
+    // PossResend or PossDup (F.1.a): a gateway that never sends one twice keeps it 0.
+    int duplicates() const noexcept { return duplicates_; }
 
     template <class Emit>
     void on_message(int session, const message_view<>& m, Emit&& emit) {
@@ -150,7 +166,10 @@ private:
             order& o = orders_[*known];
             const bool poss = m.get(97) == std::string_view("Y") || m.get(43) == std::string_view("Y");
             if (poss) report(o, 'I', 0, 0, "", emit);  // F.1.b: already received: its current state
-            else report(o, '8', 0, 0, "", emit, {}, field(103, "6"));  // F.1.a: duplicate, the order's own status
+            else {
+                ++duplicates_;
+                report(o, '8', 0, 0, "", emit, {}, field(103, "6"));  // F.1.a: duplicate, the order's own status
+            }
             return;
         }
         order o;
@@ -306,6 +325,7 @@ private:
     std::map<std::pair<int, std::string>, std::size_t> ids_;  // (session, ClOrdID) to order, the chain included
     std::map<std::string, side_book, std::less<>> books_;
     std::uint64_t clock_ = 0, order_ids_ = 0, exec_ids_ = 0;
+    int duplicates_ = 0;
 };
 
 }  // namespace fixgw
