@@ -1,6 +1,6 @@
 # 005 — Transport and engine loop
 
-**Status:** Draft · **Updated:** 2026-10-23
+**Status:** Agreed · **Updated:** 2026-10-23
 
 ## Proposal
 
@@ -150,3 +150,4 @@ for them, or one already connected (D6), and the connection is closed without a 
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-23 | Draft | Written for review. Network examined first: `eno1` (BCM5719, 1 Gb/s, `tg3`) the only link; BCM57810 dual 10 Gb/s (`bnx2x`, NUMA node 0) unused, no cable, its ports 10GBASE-T copper (`ethtool`: twisted pair, 100M/1G/10G); `net.core.busy_poll` and `busy_read` 0 |
+| 2026-10-23 | Agreed | Approved by Shep, D1–D6 as proposed: all three wait modes built and measured, busy-poll the default for the measured path; kernel busy polling measured on the card path, its options checked against kernel 7.0's documentation; the card path by a Cat6a cable between the two 10GBASE-T ports (one in its own namespace), with the 10GBASE-T line-coding cost stated (the cable to be confirmed with Shep before the measured runs); the direct loop first, then the pipeline; two SPSC rings of 512-byte slots per session; a second Logon for a connected identity closed silently |
