@@ -10,7 +10,7 @@ HP ProLiant DL380 Gen9, BIOS P89 (08/29/2024); 2 × Intel(R) Xeon(R) CPU E5-2699
 |---|---|---|---|---|---|---|---|---|---|
 | codec (note 009) | 3 | 2026-10-22 19:20 UTC | 1f21799 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | store (note 004) | 3 | 2026-10-23 00:33 UTC | 8e844c5 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
-| net (note 005) | 9 | 2026-10-23 16:05 UTC | 4970988 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| net (note 005) | 9 | 2026-10-23 19:02 UTC | 2f1697d | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 
 Every run met note 004's bench-mode conditions (each file's `environment.bench_mode`, checked before use) and was built clean; compiler and flags are in each file's `environment.build`. Ranges are min–max over a set's runs.
 
@@ -109,10 +109,10 @@ Round trip: a 200-byte message out over TCP and back from net_peer (busy-polling
 
 | Measure | loopback p50 | loopback p99 | card p50 | card p99 | card-busypoll p50 | card-busypoll p99 |
 |---|---|---|---|---|---|---|
-| round trip, busy-poll | 7,317–7,470 | 10.4 µs–10.5 µs | 39.5 µs–40.1 µs | 47.1 µs–47.4 µs | 30.8 µs–31.2 µs | 36.3 µs–37.4 µs |
-| round trip, block | 13.8 µs | 15.2 µs–15.3 µs | 41.5 µs–45.6 µs | 47.7 µs–52.4 µs | 31.7 µs–32.0 µs | 36.4 µs–37.7 µs |
-| round trip, spin then block | 7,211–7,487 | 10.3 µs–10.5 µs | 37.5 µs–39.9 µs | 44.2 µs–47.7 µs | 30.8 µs–31.7 µs | 36.3 µs–37.5 µs |
-| order path, direct, 1,000/s | 122.5 µs–124.1 µs | 130.8 µs–132.2 µs | 150.9 µs–151.5 µs | 160.7 µs–160.9 µs | 151.0 µs–151.8 µs | 159.9 µs–161.8 µs |
-| order path, pipeline, 1,000/s | 106.9 µs–107.7 µs | 115.0 µs–115.8 µs | 138.7 µs–140.6 µs | 148.4 µs–149.7 µs | 134.5 µs–135.4 µs | 142.4 µs–143.6 µs |
-| order path, direct, 10,000/s | 237.5 µs–240.3 µs | 330.5 µs–333.7 µs | 234.2 µs–235.0 µs | 322.1 µs–326.0 µs | 235.2 µs–236.9 µs | 322.9 µs–327.1 µs |
-| order path, pipeline, 10,000/s | 99.2 µs–99.7 µs | 112.4 µs–135.4 µs | 152.9 µs–184.3 µs | 191.3 µs–195.4 µs | 147.9 µs–150.4 µs | 193.1 µs–195.5 µs |
+| round trip, busy-poll | 7,431–7,538 | 10.4 µs–10.5 µs | 39.9 µs–40.5 µs | 47.0 µs–47.4 µs | 31.0 µs–31.6 µs | 35.7 µs–37.1 µs |
+| round trip, block | 13.7 µs–13.9 µs | 15.3 µs | 42.0 µs–45.0 µs | 48.5 µs–52.4 µs | 31.5 µs–32.1 µs | 36.5 µs–37.6 µs |
+| round trip, spin then block | 7,271–7,549 | 10.4 µs–10.6 µs | 37.2 µs–40.5 µs | 44.6 µs–48.4 µs | 30.6 µs–31.5 µs | 35.4 µs–36.9 µs |
+| order path, direct, 1,000/s | 122.0 µs–123.9 µs | 130.0 µs–131.9 µs | 150.2 µs–153.3 µs | 159.4 µs–164.0 µs | 150.0 µs–151.3 µs | 159.1 µs–161.5 µs |
+| order path, pipeline, 1,000/s | 106.3 µs–106.8 µs | 113.7 µs–114.1 µs | 135.8 µs–139.8 µs | 144.4 µs–148.4 µs | 132.0 µs–133.5 µs | 140.3 µs–142.0 µs |
+| order path, direct, 10,000/s | 237.1 µs–238.3 µs | 325.5 µs–329.8 µs | 234.5 µs–237.6 µs | 321.1 µs–324.0 µs | 235.1 µs–235.4 µs | 322.2 µs–323.3 µs |
+| order path, pipeline, 10,000/s | 98.7 µs–99.2 µs | 109.4 µs–111.8 µs | 145.6 µs–183.6 µs | 191.6 µs–192.6 µs | 147.5 µs–147.7 µs | 192.2 µs–194.0 µs |
