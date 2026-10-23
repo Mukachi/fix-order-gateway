@@ -1,6 +1,6 @@
 # 007 — Order entry
 
-**Status:** Draft · **Updated:** 2026-10-23
+**Status:** Agreed · **Updated:** 2026-10-23
 
 ## Proposal
 
@@ -170,7 +170,7 @@ logout and stops reconnecting) and *stop after logout*. Both engines. The intero
 
 ## Tasks
 
-- [ ] Shep: agree D1–D8
+- [x] Shep: agree D1–D8
 - [ ] Dictionary for the five messages and their conditional rules (D8, S2)
 - [ ] Order state machine and ExecID set (D1, D3)
 - [ ] Throttle and stale-order policy (D4, D5)
@@ -185,3 +185,4 @@ logout and stops reconnecting) and *stop after logout*. Both engines. The intero
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-23 | Draft | Written for review. Sources: FIX 4.4 with Errata 20030618 (the specification package from fixtrading.org, read: Volume 4's ExecutionReport usage, OrdStatus precedence and the Order State Change Matrices' list, A.1.a to L.1.b); `OrchestraFIX44.xml` at the pinned commit (the five messages: NewOrderSingle 78 members, OrderCancelRequest 23, OrderCancelReplaceRequest 77, ExecutionReport 140, OrderCancelReject 23; the orchestration has no machine-readable conditional rules, hence D8's hand-written ones); EP311 (FIX 4.4 Errors and Omissions, August 2026) noted: it corrects the orchestration, and our pinned commit is from the day it was published |
+| 2026-10-23 | Agreed | Approved by Shep, every decision as proposed (option A each): D1 order state kept by the gateway on the session thread; D2 matrices A, B, C, D, E.1.b, F, I, J; D3 a fixed-capacity ExecID set for the session's life; D4 over the limit refused back to the application, cancels counted but never refused while their order is live; D5 orders and replaces older than the configured age gap-filled and reported as not sent, cancels always resent; D6 the four in-doubt tests; D7 a price-time book per symbol with scripted responses where needed; D8 the five messages as FIX 4.4 defines them plus Volume 4's conditional rules by hand |
