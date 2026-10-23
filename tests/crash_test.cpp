@@ -158,7 +158,7 @@ template <class J>
             quiet_since = std::chrono::steady_clock::now();
         }
         if (us.state().state() == session_state::active && sent < orders && step % 3 == 0) {
-            us.send("D", test::soh("11=O" + std::to_string(sent) + "|55=VOD.L|54=1|38=100|40=1|"), now());
+            us.send("D", test::soh(test::order_fields("O" + std::to_string(sent))), now());
             ++sent;
         }
         us.on_tick(now());

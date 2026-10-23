@@ -184,7 +184,16 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
             if (!(more & 64)) e.add(7, std::uint64_t{1u + (next() % 4)});
             e.add(16, static_cast<std::uint64_t>(next() % 3));
         }
-        if (type == "D") e.add(11, "FORGED");
+        if (type == "D") {  // a whole NewOrderSingle, or (more & 128) one missing its required fields
+            e.add(11, "FORGED");
+            if (!(more & 128)) {
+                e.add(55, "VOD.L");
+                e.add(54, '1');
+                e.add(60, "20261021-09:30:00.000");
+                e.add(38, std::uint64_t{100});
+                e.add(40, '1');
+            }
+        }
         const std::string_view m = e.finish();
         (from_initiator ? a_to_b : b_to_a).append(m);
     };
@@ -195,7 +204,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
             case 2: deliver(b_to_a, a, next() + 1u); break;
             case 3:
             case 4: {
-                const std::string body = "11=" + std::to_string(++order) + "\x01" "55=VOD.L\x01";
+                const std::string body = "11=" + std::to_string(++order) +
+                                         "\x01" "55=VOD.L\x01" "54=1\x01" "60=20261021-09:30:00.000\x01" "38=100\x01" "40=1\x01";
                 (data[i - 1] % 12 == 3 ? a : b).s.send("D", body, now());
                 break;
             }

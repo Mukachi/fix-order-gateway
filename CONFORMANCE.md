@@ -5,7 +5,7 @@ Basis: *FIX Session Layer Test Cases*, Version 1.0, June 2020, FIX Protocol Limi
 order. Design: [note 006](docs/design/006-conformance.md). Each result shown by the test lists what it
 checked; a case not shown says why.
 
-85 cases: 1 mandatory not applicable, 2 mandatory note 007, 67 mandatory pass, 13 optional not implemented, 2 optional pass.
+85 cases: 1 mandatory not applicable, 1 mandatory note 007, 68 mandatory pass, 13 optional not implemented, 2 optional pass.
 
 | Case | Mandatory | Condition | Result | Shown by, or why not |
 |---|---|---|---|---|
@@ -74,7 +74,7 @@ checked; a case not shown says why.
 | 14j | yes | Group fields out of order | pass | group fields out of order (HopSendingTime before HopCompID): Reject 15 |
 | 14k | yes | Non-data value contains SOH | pass | a non-data value contains SOH: Reject 17 |
 | 14l | no | Application not available | not implemented | optional; the engine never refuses a message for being busy (it waits in the ring or the overflow, note 005) |
-| 14m | yes | Conditionally required field missing | note 007 | conditional rules belong to application messages (BusinessMessageReject 5), with their dictionary |
+| 14m | yes | Conditionally required field missing | pass | a limit NewOrderSingle without Price: BusinessMessageReject 5 naming tag 44, number consumed; a fill (ExecType Trade) without LastQty: BusinessMessageReject 5 naming tag 32 |
 | 14n | yes | Field in cleartext and encrypted, different values | not applicable | encryption (17) not supported |
 | 15 | no | Fields in different orders | pass | header fields in a different order, twice: accepted, the numbers after them accepted |
 | 16a | yes | Message queued while disconnected | pass | an order while disconnected: queued, unnumbered |

@@ -181,7 +181,7 @@ void scenario_1s() {
     {
         fixture f(acceptor_config());
         f.s.on_connected(at(0));
-        f.feed(client("D", 1, "11=X|"));
+        f.feed(client("D", 1, test::order_fields("X")));
         check(f.k.written.empty() && f.k.disconnects == 1, "2S: first message not a Logon: disconnect, nothing sent");
     }
 }
@@ -189,49 +189,49 @@ void scenario_1s() {
 void scenario_2() {
     {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|"));
+        f.feed(venue("D", 2, test::order_fields("A")));
         check(f.k.delivered.size() == 1 && f.s.next_expected() == 3, "2a: MsgSeqNum as expected: delivered");
     }
     {
         logged_on f;
-        f.feed(venue("D", 4, "11=A|"));
+        f.feed(venue("D", 4, test::order_fields("A")));
         check(f.k.delivered.empty() && type(f.last()) == "2" && field(f.last(), 7) == "2" && field(f.last(), 16) == "0" &&
                   f.s.state() == session_state::resending,
               "2b: too high: ResendRequest 2 to 0, the message dropped (D1)");
-        f.feed(venue("D", 5, "11=B|"));
+        f.feed(venue("D", 5, test::order_fields("B")));
         check(f.k.written.size() == 2, "2b: a second message above the gap: no second ResendRequest");
         f.feed(venue("4", 2, "43=Y|122=" + std::string(base_ts) + "|123=Y|36=4|"));
-        f.feed(venue("D", 4, "43=Y|122=" + std::string(base_ts) + "|11=A|"));
-        f.feed(venue("D", 5, "43=Y|122=" + std::string(base_ts) + "|11=B|"));
+        f.feed(venue("D", 4, "43=Y|122=" + std::string(base_ts) + "|" + test::order_fields("A")));
+        f.feed(venue("D", 5, "43=Y|122=" + std::string(base_ts) + "|" + test::order_fields("B")));
         check(f.k.delivered.size() == 2 && f.s.next_expected() == 6 && f.s.state() == session_state::active,
               "2b: resend fills the gap: both delivered once, in order, active again");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|"));
-        f.feed(venue("D", 2, "11=A|"));
+        f.feed(venue("D", 2, test::order_fields("A")));
+        f.feed(venue("D", 2, test::order_fields("A")));
         check(type(f.last()) == "5" && f.k.disconnects == 1 &&
                   field(f.last(), 58) == "MsgSeqNum too low, expecting 3 but received 2",
               "2c: too low without PossDup: Logout with the reason, disconnect");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|"));
+        f.feed(venue("D", 2, test::order_fields("A")));
         const auto n = f.k.written.size();
-        f.feed(venue("D", 2, "43=Y|122=" + std::string(base_ts) + "|11=A|"));
+        f.feed(venue("D", 2, "43=Y|122=" + std::string(base_ts) + "|" + test::order_fields("A")));
         check(f.k.written.size() == n && f.k.delivered.size() == 1 && f.s.next_expected() == 3,
               "2e: too low with PossDup: ignored");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "43=Y|122=20261021-07:31:00.000|11=A|"));
+        f.feed(venue("D", 2, "43=Y|122=20261021-07:31:00.000|" + test::order_fields("A")));
         check(type(f.last()) == "3" && field(f.last(), 373) == "10" && field(f.last(), 371) == "122" &&
                   f.s.next_expected() == 3 && f.k.delivered.empty(),
               "2f: OrigSendingTime after SendingTime: Reject 10, number consumed");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "43=Y|11=A|"));
+        f.feed(venue("D", 2, "43=Y|" + test::order_fields("A")));
         check(type(f.last()) == "3" && field(f.last(), 373) == "1" && field(f.last(), 371) == "122" &&
                   f.s.next_expected() == 3,
               "2g: PossDup without OrigSendingTime: Reject 1, number consumed");
@@ -244,25 +244,25 @@ void scenario_2() {
     }
     {
         logged_on f;
-        f.feed(from("OTHER", "CLIENT", "D", 2, "11=A|"));
+        f.feed(from("OTHER", "CLIENT", "D", 2, test::order_fields("A")));
         check(f.k.written.size() >= 3 && type(f.k.written[f.k.written.size() - 2]) == "3" &&
                   field(f.k.written[f.k.written.size() - 2], 373) == "9" && type(f.last()) == "5" && f.k.disconnects == 1,
               "2k: CompID mismatch: Reject 9, Logout, disconnect");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|", "20261021-07:33:00.001"));
+        f.feed(venue("D", 2, test::order_fields("A"), "20261021-07:33:00.001"));
         check(type(f.k.written[f.k.written.size() - 2]) == "3" && field(f.k.written[f.k.written.size() - 2], 373) == "10" &&
                   type(f.last()) == "5" && f.k.disconnects == 1,
               "2o: SendingTime 3 minutes out: Reject 10, Logout, disconnect");
     }
     {
         logged_on f;
-        f.feed(test::message("35=D|49=VENUE|56=CLIENT|34=2|52=" + std::string(base_ts) + "|11=A|", 0, 1));
-        f.feed(test::message("35=D|49=VENUE|56=CLIENT|34=2|52=" + std::string(base_ts) + "|11=A|", 3));
+        f.feed(test::message("35=D|49=VENUE|56=CLIENT|34=2|52=" + std::string(base_ts) + "|" + test::order_fields("A"), 0, 1));
+        f.feed(test::message("35=D|49=VENUE|56=CLIENT|34=2|52=" + std::string(base_ts) + "|" + test::order_fields("A"), 3));
         check(f.k.delivered.empty() && f.s.next_expected() == 2 && f.k.written.size() == 1,
               "2d, 2m, 3b: garbled (CheckSum, BodyLength): ignored, number not consumed");
-        f.feed(venue("D", 2, "11=A|"));
+        f.feed(venue("D", 2, test::order_fields("A")));
         check(f.k.delivered.size() == 1, "2d: the next valid message is processed");
     }
 }
@@ -305,9 +305,9 @@ void scenario_7_8() {
     }
     {
         logged_on f;  // we sent: 1 Logon
-        f.s.send("D", test::soh("11=A|55=VOD.L|"), at(1));  // 2
+        f.s.send("D", test::soh(test::order_fields("A")), at(1));  // 2
         f.s.on_tick(at(31));                                  // 3 Heartbeat
-        f.s.send("D", test::soh("11=B|55=VOD.L|"), at(32));  // 4
+        f.s.send("D", test::soh(test::order_fields("B")), at(32));  // 4
         const auto n = f.k.written.size();
         f.feed(venue("2", 2, "7=1|16=0|"), 33);
         std::vector<std::string> r(f.k.written.begin() + static_cast<std::ptrdiff_t>(n), f.k.written.end());
@@ -341,7 +341,7 @@ void scenario_10_11() {
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|"));
+        f.feed(venue("D", 2, test::order_fields("A")));
         f.feed(venue("4", 2, "43=Y|122=" + std::string(base_ts) + "|123=Y|36=3|"));
         check(f.k.disconnects == 0 && f.s.next_expected() == 3, "10c: GapFill too low with PossDup: ignored");
         f.feed(venue("4", 2, "123=Y|36=3|"));
@@ -408,9 +408,9 @@ void scenario_14_16_19_20() {
     }
     {
         fixture f(initiator_config());
-        const auto r1 = f.s.send("D", test::soh("11=Q1|"), at(0));
+        const auto r1 = f.s.send("D", test::soh(test::order_fields("Q1")), at(0));
         f.s.on_connected(at(1));
-        const auto r2 = f.s.send("D", test::soh("11=Q2|"), at(1));
+        const auto r2 = f.s.send("D", test::soh(test::order_fields("Q2")), at(1));
         check(r1 == send_result::queued && r2 == send_result::queued && f.k.written.size() == 1,
               "16a: application messages queued, unnumbered, while not logged on");
         f.feed(venue("A", 1, "98=0|108=30|"), 2);
@@ -421,7 +421,7 @@ void scenario_14_16_19_20() {
     }
     {
         fixture f(initiator_config());
-        f.s.send("D", test::soh("11=Q1|"), at(0));
+        f.s.send("D", test::soh(test::order_fields("Q1")), at(0));
         f.s.on_connected(at(1));
         f.feed(venue("A", 3, "98=0|108=30|"), 2);
         check(f.k.written.size() == 2 && f.s.queued() == 1, "16b: queued messages wait while the gap is recovered");
@@ -432,7 +432,7 @@ void scenario_14_16_19_20() {
     {
         fixture f(initiator_config());
         f.k.release_answer = false;
-        f.s.send("D", test::soh("11=STALE|"), at(0));
+        f.s.send("D", test::soh(test::order_fields("STALE")), at(0));
         f.s.on_connected(at(1));
         f.feed(venue("A", 1, "98=0|108=30|"), 2);
         check(f.k.written.size() == 1 && f.s.queued() == 0, "16: the stale-order hook drops a queued order");
@@ -441,18 +441,18 @@ void scenario_14_16_19_20() {
         session_config c = initiator_config();
         c.queue_messages = 2;
         fixture f(c);
-        f.s.send("D", test::soh("11=1|"), at(0));
-        f.s.send("D", test::soh("11=2|"), at(0));
-        check(f.s.send("D", test::soh("11=3|"), at(0)) == send_result::refused, "16: queue full: refused");
+        f.s.send("D", test::soh(test::order_fields("1")), at(0));
+        f.s.send("D", test::soh(test::order_fields("2")), at(0));
+        check(f.s.send("D", test::soh(test::order_fields("3")), at(0)) == send_result::refused, "16: queue full: refused");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "97=Y|11=A|"));
+        f.feed(venue("D", 2, "97=Y|" + test::order_fields("A")));
         check(f.k.delivered.size() == 1, "19: PossResend in sequence: delivered (duplicate detection is note 007's)");
     }
     {
         logged_on f;
-        f.feed(venue("D", 3, "11=B|"));  // gap: our ResendRequest outstanding
+        f.feed(venue("D", 3, test::order_fields("B")));  // gap: our ResendRequest outstanding
         const auto n = f.k.written.size();
         f.feed(venue("2", 4, "7=1|16=0|"));
         check(f.k.written.size() == n + 1 && type(f.last()) == "4" && field(f.last(), 34) == "1" &&
@@ -479,9 +479,9 @@ void reset_d4() {
 void determinism() {
     const auto script = [] {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|"), 1);
-        f.s.send("D", test::soh("11=O1|"), at(2));
-        f.feed(venue("D", 5, "11=C|"), 3);
+        f.feed(venue("D", 2, test::order_fields("A")), 1);
+        f.s.send("D", test::soh(test::order_fields("O1")), at(2));
+        f.feed(venue("D", 5, test::order_fields("C")), 3);
         f.feed(venue("2", 3, "7=1|16=0|"), 4);
         f.s.on_tick(at(40));
         f.feed(venue("4", 3, "43=Y|122=" + std::string(base_ts) + "|123=Y|36=6|"), 41);

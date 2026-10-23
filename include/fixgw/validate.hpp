@@ -75,10 +75,10 @@ inline constexpr const fix44::field_info* find_field(std::uint32_t t) noexcept {
     return lo < std::size(fix44::fields) && fix44::fields[lo].tag == t ? &fix44::fields[lo] : nullptr;
 }
 
-inline constexpr const fix44::layout* find_layout(std::string_view name) noexcept {
-    for (const auto& l : fix44::layouts)
-        if (l.name == name) return &l;
-    return nullptr;
+// v[at, at + n), the caller having checked the bounds: substr's range check
+// throws, which the hot path must not (note 003, S6).
+inline constexpr std::string_view slice(std::string_view v, std::size_t at, std::size_t n) noexcept {
+    return {v.data() + at, n};
 }
 
 inline constexpr bool digits(std::string_view v) noexcept {
@@ -88,26 +88,105 @@ inline constexpr bool digits(std::string_view v) noexcept {
     return true;
 }
 
+// FIX's float: an optional '-', digits with at most one '.', a digit somewhere.
+inline constexpr bool decimal(std::string_view v) noexcept {
+    if (!v.empty() && v[0] == '-') v.remove_prefix(1);
+    bool digit = false, point = false;
+    for (const char c : v) {
+        if (c >= '0' && c <= '9') digit = true;
+        else if (c == '.' && !point) point = true;
+        else return false;
+    }
+    return digit;
+}
+
+// YYYYMMDD.
+inline constexpr bool date(std::string_view v) noexcept {
+    if (v.size() != 8 || !digits(v)) return false;
+    const int m = (v[4] - '0') * 10 + (v[5] - '0'), d = (v[6] - '0') * 10 + (v[7] - '0');
+    return m >= 1 && m <= 12 && d >= 1 && d <= 31;
+}
+
+// HH:MM:SS or HH:MM:SS.sss.
+inline constexpr bool time_only(std::string_view v) noexcept {
+    if ((v.size() != 8 && v.size() != 12) || v[2] != ':' || v[5] != ':' || (v.size() == 12 && v[8] != '.')) return false;
+    const auto two = [&](std::size_t i) { return digits(slice(v, i, 2)) ? (v[i] - '0') * 10 + (v[i + 1] - '0') : -1; };
+    return two(0) >= 0 && two(0) <= 23 && two(3) >= 0 && two(3) <= 59 && two(6) >= 0 && two(6) <= 60 &&
+           (v.size() == 8 || digits(slice(v, 9, 3)));
+}
+
+// YYYYMM, YYYYMMDD, or YYYYMMwN (week N).
+inline constexpr bool month_year(std::string_view v) noexcept {
+    if (v.size() < 6 || !digits(slice(v, 0, 6))) return false;
+    const int m = (v[4] - '0') * 10 + (v[5] - '0');
+    if (m < 1 || m > 12) return false;
+    if (v.size() == 6) return true;
+    if (v.size() == 8 && v[6] == 'w') return v[7] >= '1' && v[7] <= '5';
+    return v.size() == 8 && date(v);
+}
+
+inline bool in_codes(const fix44::field_info& f, std::string_view v) noexcept {
+    for (std::size_t i = f.codes_first; i < f.codes_first + f.codes_count; ++i)
+        if (fix44::codes[i] == v) return true;
+    return false;
+}
+
 // 0 if the value suits the field, otherwise the SessionRejectReason.
 inline int check_value(const fix44::field_info& f, std::string_view v) noexcept {
+    using fix44::kind;
     switch (f.k) {
-        case fix44::kind::string:
-        case fix44::kind::data:
+        case kind::string:
+        case kind::data:
             return 0;
-        case fix44::kind::length:
-        case fix44::kind::seq_num:
-        case fix44::kind::num_in_group:
+        case kind::length:
+        case kind::seq_num:
+        case kind::num_in_group:
             return digits(v) ? 0 : reject_reason::incorrect_data_format;
-        case fix44::kind::integer:
-            return digits(!v.empty() && v[0] == '-' ? v.substr(1) : v) ? 0 : reject_reason::incorrect_data_format;
-        case fix44::kind::utc_timestamp:
+        case kind::integer:
+            return digits(!v.empty() && v[0] == '-' ? slice(v, 1, v.size() - 1) : v) ? 0 : reject_reason::incorrect_data_format;
+        case kind::decimal:
+            return decimal(v) ? 0 : reject_reason::incorrect_data_format;
+        case kind::single_char:
+            return v.size() == 1 ? 0 : reject_reason::incorrect_data_format;
+        case kind::boolean:
+            return v == "Y" || v == "N" ? 0 : reject_reason::incorrect_data_format;
+        case kind::utc_timestamp:
             return parse_utc_timestamp(v) ? 0 : reject_reason::incorrect_data_format;
-        case fix44::kind::code_set:
-            for (std::size_t i = f.codes_first; i < f.codes_first + f.codes_count; ++i)
-                if (fix44::codes[i] == v) return 0;
-            return reject_reason::value_incorrect;
+        case kind::utc_time_only:
+            return time_only(v) ? 0 : reject_reason::incorrect_data_format;
+        case kind::date:
+            return date(v) ? 0 : reject_reason::incorrect_data_format;
+        case kind::month_year:
+            return month_year(v) ? 0 : reject_reason::incorrect_data_format;
+        case kind::code_set:
+            return in_codes(f, v) ? 0 : reject_reason::value_incorrect;
+        case kind::multi_code_set:  // space-separated, each one of the codes
+            while (!v.empty()) {
+                const std::size_t sp = v.find(' ');
+                if (!in_codes(f, slice(v, 0, sp == std::string_view::npos ? v.size() : sp))) return reject_reason::value_incorrect;
+                if (sp == std::string_view::npos) break;
+                v.remove_prefix(sp + 1);
+            }
+            return 0;
     }
     return reject_reason::other;
+}
+
+inline constexpr const fix44::message_def* find_message(std::string_view type) noexcept {
+    for (const auto& m : fix44::messages)
+        if (m.type == type) return &m;
+    return nullptr;
+}
+
+// The node for `tag` in a message's run, or nullptr.
+inline constexpr const fix44::node* find_node(const fix44::message_def& m, std::uint32_t tag) noexcept {
+    std::size_t lo = m.first, hi = m.first + m.count;
+    while (lo < hi) {
+        const std::size_t mid = (lo + hi) / 2;
+        if (fix44::nodes[mid].tag < tag) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo < m.first + m.count && fix44::nodes[lo].tag == tag ? &fix44::nodes[lo] : nullptr;
 }
 
 }  // namespace detail
@@ -135,75 +214,117 @@ inline constexpr bool listed(std::string_view list, std::string_view t) noexcept
     return false;
 }
 
-// D3: one pass over a session-layer message's fields, in order, against its
-// header, body and trailer in the dictionary; the first failure. `type` must
-// have a layout (the seven session messages).
+// Whether the dictionary has an entry for `type` (the session messages and
+// the order-entry ones).
+inline bool has_dictionary(std::string_view type) noexcept { return detail::find_message(type) != nullptr; }
+
+// One pass over a message's fields, in order, against its dictionary entry
+// (note 006 D3, note 007 D8); the first failure. Repeating groups may nest:
+// each open group is checked for its entries' count (16) and its fields'
+// order within an entry (15). Required fields are checked at the top level;
+// within an entry only its first field is (it starts the entry).
 template <std::size_t N>
 decode_result validate(const message_view<N>& m, std::string_view type) noexcept {
     using namespace fix44;
     const auto fail = [](int reason, std::uint32_t tag, const char* why) noexcept { return decode_result{false, reason, tag, why}; };
-    const layout* parts[3] = {detail::find_layout("header"), detail::find_layout(type), detail::find_layout("trailer")};
-    if (!parts[0] || !parts[1] || !parts[2]) return fail(reject_reason::other, 0, "no dictionary entry for this MsgType");
-    // One bit per member of the three parts, for repeats and required fields.
-    std::uint64_t seen = 0;
-    const auto bit = [&](std::size_t part, std::size_t k) noexcept {
-        std::size_t at = k;
-        for (std::size_t p = 0; p < part; ++p) at += parts[p]->count;
-        return std::uint64_t{1} << at;
-    };
-    const group_info* g = nullptr;  // the group being read, if any
-    std::uint64_t declared = 0, entries = 0;
-    std::size_t last = 0;  // the group member read last in this entry
+    const message_def* def = detail::find_message(type);
+    if (!def) return fail(reject_reason::other, 0, "no dictionary entry for this MsgType");
+    constexpr std::size_t max_nodes = 512, max_depth = 4;
+    if (def->count > max_nodes) return fail(reject_reason::other, 0, "dictionary entry too large");
+    std::uint64_t seen[max_nodes / 64] = {};
+    struct open_group {
+        std::size_t node;  // the NumInGroup's index in nodes
+        std::uint64_t declared, entries;
+        unsigned last;  // position of the field read last in this entry
+    } open[max_depth];
+    std::size_t depth = 0;
+    const auto close_one = [&]() noexcept { --depth; return open[depth].entries == open[depth].declared; };
 
     for (std::size_t i = 0; i < m.size(); ++i) {
         const std::uint32_t tag = m[i].tag;
         const std::string_view v = m.value(i);
-        if (g) {
-            std::size_t k = 0;
-            while (k < g->count && group_members[g->first + k].tag != tag) ++k;
-            if (k < g->count) {
-                if (k == 0) {
-                    if (++entries > declared) return fail(reject_reason::incorrect_num_in_group, g->count_tag, "more group entries than NumInGroup");
-                } else if (entries == 0 || k <= last) {
-                    return fail(reject_reason::group_fields_out_of_order, tag, "repeating group fields out of order");
-                }
-                last = k;
-                const field_info* f = detail::find_field(tag);
-                if (const int r = f ? detail::check_value(*f, v) : 0) return fail(r, tag, r == reject_reason::value_incorrect ? "value is incorrect (out of range) for this tag" : "incorrect data format for value");
-                continue;
-            }
-            if (entries != declared) return fail(reject_reason::incorrect_num_in_group, g->count_tag, "fewer group entries than NumInGroup");
-            g = nullptr;
-        }
-        std::size_t part = 0, k = 0;
-        for (; part < 3; ++part) {
-            for (k = 0; k < parts[part]->count && members[parts[part]->first + k].tag != tag; ++k) {
-            }
-            if (k < parts[part]->count) break;
-        }
-        if (part == 3)
+        const node* n = detail::find_node(*def, tag);
+        if (!n)
             return detail::tag_defined(tag) ? fail(reject_reason::tag_not_defined_for_message_type, tag, "tag not defined for this message type")
                                             : fail(reject_reason::invalid_tag_number, tag, "invalid tag number");
-        const std::uint64_t b = bit(part, k);
-        if (seen & b) return fail(reject_reason::tag_repeated, tag, "tag appears more than once");
-        seen |= b;
+        // Close the groups this field is not in.
+        while (depth > 0 && n->parent != open[depth - 1].node) {
+            bool inside = false;  // in a group nested in the open one, not yet opened: out of order
+            for (std::size_t p = n->parent; p != no_parent; p = nodes[p].parent)
+                if (p == open[depth - 1].node) inside = true;
+            if (inside) return fail(reject_reason::group_fields_out_of_order, tag, "repeating group fields out of order");
+            const std::uint32_t count_tag = nodes[open[depth - 1].node].tag;
+            if (!close_one()) return fail(reject_reason::incorrect_num_in_group, count_tag, "group entries not as NumInGroup says");
+        }
+        if (n->parent != no_parent) {
+            if (depth == 0 || open[depth - 1].node != n->parent)
+                return fail(reject_reason::group_fields_out_of_order, tag, "repeating group fields out of order");
+            open_group& g = open[depth - 1];
+            if (n->position == 0) {
+                if (++g.entries > g.declared) return fail(reject_reason::incorrect_num_in_group, nodes[g.node].tag, "group entries not as NumInGroup says");
+            } else if (g.entries == 0 || n->position <= g.last) {
+                return fail(reject_reason::group_fields_out_of_order, tag, "repeating group fields out of order");
+            }
+            g.last = n->position;
+        } else {
+            const std::size_t k = static_cast<std::size_t>(n - &nodes[def->first]);
+            if (seen[k / 64] & (std::uint64_t{1} << (k % 64))) return fail(reject_reason::tag_repeated, tag, "tag appears more than once");
+            seen[k / 64] |= std::uint64_t{1} << (k % 64);
+        }
         const field_info* f = detail::find_field(tag);
         if (const int r = f ? detail::check_value(*f, v) : 0)
             return fail(r, tag, r == reject_reason::value_incorrect ? "value is incorrect (out of range) for this tag" : "incorrect data format for value");
-        const member& mem = members[parts[part]->first + k];
-        if (mem.group) {
-            g = &groups[mem.group - 1];
-            declared = detail::parse_uint(v).value_or(~std::uint64_t{0});  // digits, checked above; too long never matches
-            entries = 0;
-            last = 0;
+        if (n->group) {
+            if (depth == max_depth) return fail(reject_reason::other, tag, "repeating groups nested too deep");
+            open[depth++] = {static_cast<std::size_t>(n - nodes), detail::parse_uint(v).value_or(~std::uint64_t{0}), 0, 0};
         }
     }
-    if (g && entries != declared) return fail(reject_reason::incorrect_num_in_group, g->count_tag, "fewer group entries than NumInGroup");
-    for (std::size_t part = 0; part < 3; ++part)
-        for (std::size_t k = 0; k < parts[part]->count; ++k) {
-            const member& mem = members[parts[part]->first + k];
-            if (mem.required && !(seen & bit(part, k))) return fail(reject_reason::required_tag_missing, mem.tag, "required tag missing");
+    while (depth > 0) {
+        const std::uint32_t count_tag = nodes[open[depth - 1].node].tag;
+        if (!close_one()) return fail(reject_reason::incorrect_num_in_group, count_tag, "group entries not as NumInGroup says");
+    }
+    for (std::size_t k = 0; k < def->count; ++k) {
+        const node& n = nodes[def->first + k];
+        if (n.parent == no_parent && n.required && !(seen[k / 64] & (std::uint64_t{1} << (k % 64))))
+            return fail(reject_reason::required_tag_missing, n.tag, "required tag missing");
+    }
+    return {true, 0, 0, nullptr};
+}
+
+// Volume 4's conditional requirements for the fields the order state machine
+// uses (note 007, D8): stated in its prose, not in the orchestration, so
+// written here. A failure is answered with BusinessMessageReject, reason 5
+// (scenario 14m); RefTagID names the missing field.
+namespace business_reason {
+inline constexpr int unsupported_message_type = 3;
+inline constexpr int conditionally_required_field_missing = 5;
+}  // namespace business_reason
+
+template <std::size_t N>
+decode_result conditional_rules(const message_view<N>& m, std::string_view type) noexcept {
+    const auto missing = [&](std::uint32_t tag) noexcept { return !m.get(tag).has_value(); };
+    const auto fail = [](std::uint32_t tag) noexcept {
+        return decode_result{false, business_reason::conditionally_required_field_missing, tag, "Conditionally required field missing"};
+    };
+    if (type == "D" || type == "G") {
+        const std::string_view ord_type = m.get(40).value_or("");
+        // Price for the limit types: Limit, Stop limit, Limit or better, Limit with or without.
+        if ((ord_type == "2" || ord_type == "4" || ord_type == "7" || ord_type == "8") && missing(44)) return fail(44);
+        if ((ord_type == "3" || ord_type == "4") && missing(99)) return fail(99);  // StopPx for stops
+        if (m.get(59) == std::string_view("6") && missing(432) && missing(126)) return fail(432);  // GTD: an expiry
+        if (missing(38) && missing(152) && missing(516)) return fail(38);  // one of the OrderQtyData quantities
+    } else if (type == "8") {
+        const std::string_view exec_type = m.get(150).value_or("");
+        // OrigClOrdID when answering a cancel or replace (PendingCancel, Replaced);
+        // Canceled may be unsolicited (E.1.b), so the state machine judges it.
+        if ((exec_type == "6" || exec_type == "5") && missing(41)) return fail(41);
+        if ((exec_type == "H" || exec_type == "G") && missing(19)) return fail(19);  // ExecRefID for a bust or correction
+        if (exec_type == "D" && missing(378)) return fail(378);  // ExecRestatementReason
+        if (exec_type == "F" || exec_type == "G") {  // LastQty, LastPx for a fill or its correction
+            if (missing(32)) return fail(32);
+            if (missing(31)) return fail(31);
         }
+    }
     return {true, 0, 0, nullptr};
 }
 

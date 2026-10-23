@@ -367,7 +367,7 @@ private:
             }
             if (sequence_handled(*seq, now)) return;
             ++expected_;
-            if (c.business) send_business_reject(*seq, type, now);
+            if (c.business) send_business_reject(*seq, type, c.r, now);
             else send_reject(*seq, c.r.ref_tag, type, c.r.reject_reason, c.r.why, now);
             after_in_order(now);
             return;
@@ -421,20 +421,31 @@ private:
     // The dictionary's verdict on the message in in_ (D3, D4).
     content check_content(std::string_view type) const noexcept {
         if (detail::is_admin(type)) return {validate(in_, type), false};
-        if (listed(cfg_.app_msg_types, type)) return {{true, 0, 0, nullptr}, false};
+        if (listed(cfg_.app_msg_types, type)) {
+            if (!has_dictionary(type)) return {{true, 0, 0, nullptr}, false};  // a user-defined type the application takes
+            if (const decode_result r = validate(in_, type); !r.ok) return {r, false};
+            const decode_result c = conditional_rules(in_, type);
+            return {c, !c.ok};
+        }
         if (!valid_msg_type(type)) return {{false, reject_reason::invalid_msg_type, 35, "Invalid MsgType"}, false};
         return {{false, 0, 0, "Unsupported Message Type"}, true};
     }
 
-    // Scenario 2r: BusinessMessageReject, reason 3; an application message, so
-    // resent (not gap-filled) when asked for.
-    void send_business_reject(std::uint64_t ref_seq, std::string_view ref_type, session_time now) {
-        sink_.log(session_log::warning, "Unsupported Message Type", ref_seq);
+    // Scenarios 2r and 14m: BusinessMessageReject, reason 3 (unsupported
+    // MsgType) or 5 (a conditionally required field missing, RefTagID... in
+    // Text, as BusinessMessageReject has no RefTagID); an application message,
+    // so resent (not gap-filled) when asked for.
+    void send_business_reject(std::uint64_t ref_seq, std::string_view ref_type, const decode_result& r, session_time now) {
+        const bool unsupported = r.reject_reason == 0;
+        detail::text why;
+        if (unsupported) why << "Unsupported Message Type";
+        else why << "Conditionally required field missing: " << std::uint64_t{r.ref_tag};
+        sink_.log(session_log::warning, why.view(), ref_seq);
         emit("j", now, [&](encoder& e) {
             e.add(45, ref_seq);
             e.add(372, ref_type);
-            e.add(380, std::uint64_t{3});
-            e.add(58, "Unsupported Message Type");
+            e.add(380, std::uint64_t{unsupported ? 3u : static_cast<unsigned>(r.reject_reason)});
+            e.add(58, why.view());
         });
     }
 

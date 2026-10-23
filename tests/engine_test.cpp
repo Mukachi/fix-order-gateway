@@ -72,13 +72,13 @@ void run_mode(wait_mode mode, bool drop_midway) {
         }
         if (!inbox.empty()) inbox.erase(0, v.on_bytes(inbox.data(), inbox.size(), clock_now()));
         for (const auto& id : vs.to_answer)
-            v.send("8", test::soh("37=X-" + id + "|11=" + id + "|17=E-" + id + "|150=0|39=0|"), clock_now());
+            v.send("8", test::soh(test::report_fields(id, "E-" + id)), clock_now());
         vs.to_answer.clear();
         vc.flush();
         v.on_tick(clock_now());
         // the application
         if (v.state() == session_state::active && submitted < n && submitted - received < 64) {
-            if (submit_order(*in, "D", test::soh("11=O" + std::to_string(submitted) + "|55=VOD.L|54=1|38=100|40=1|"),
+            if (submit_order(*in, "D", test::soh(test::order_fields("O" + std::to_string(submitted))),
                              e.doorbell()))
                 ++submitted;
         }

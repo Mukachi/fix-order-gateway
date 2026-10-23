@@ -101,9 +101,12 @@ struct fixture {
 struct logged_on : fixture {
     explicit logged_on(const session_config& c = initiator_config()) : fixture(c) {
         s.on_connected(at(0));
-        feed(venue("A", 1, "98=0|108=30|"));
+        feed(c.role == session_role::initiator ? venue("A", 1, "98=0|108=30|") : client("A", 1, "98=0|108=30|"));
     }
 };
+
+// An acceptor logged on: their Logon 1, ours 1.
+session_config acceptor_logged_on() { return acceptor_config(); }
 
 // A Reject for message `seq` with `reason` and RefTagID `tag` was the last
 // thing sent, and the number was consumed.
@@ -117,7 +120,7 @@ bool rejected(const logged_on& f, std::uint64_t seq, int reason, int tag, std::u
 // A message after one that was ignored as garbled: processed with the same
 // number, so the number was not consumed.
 bool next_processed(logged_on& f, std::uint64_t seq) {
-    f.feed(venue("D", seq, "11=N|"));
+    f.feed(venue("D", seq, test::order_fields("N")));
     return f.k.delivered.size() == 1 && f.s.next_expected() == seq + 1;
 }
 
@@ -223,7 +226,7 @@ void scenario_1s_2s() {
     {
         fixture f(acceptor_config());
         f.s.on_connected(at(0));
-        f.feed(client("D", 1, "11=X|"));
+        f.feed(client("D", 1, test::order_fields("X")));
         check(f.k.written.empty() && f.k.disconnects == 1, "2S: first message not a Logon: disconnected, nothing sent");
     }
 }
@@ -231,7 +234,7 @@ void scenario_1s_2s() {
 void scenario_2() {
     {
         logged_on f;
-        f.feed(venue("D", 2, "11=A|"));
+        f.feed(venue("D", 2, test::order_fields("A")));
         check(f.k.delivered.size() == 1 && f.s.next_expected() == 3, "2a: MsgSeqNum as expected: accepted");
         check(f.k.delivered.size() == 1, "2h: BeginString FIX.4.4 as expected: accepted");
         check(f.k.delivered.size() == 1, "2j: SenderCompID and TargetCompID as expected: accepted");
@@ -243,7 +246,7 @@ void scenario_2() {
     }
     {
         logged_on f;
-        f.feed(venue("D", 4, "11=A|"));
+        f.feed(venue("D", 4, test::order_fields("A")));
         check(type(f.last()) == "2" && field(f.last(), 7) == "2" && f.k.delivered.empty(),
               "2b: MsgSeqNum higher than expected: ResendRequest");
     }
@@ -263,19 +266,19 @@ void scenario_2() {
     }
     {
         logged_on g;
-        g.feed(venue("D", 2, "11=A|"));
-        g.feed(venue("D", 2, "43=Y|122=20261021-07:29:59.000|11=A|"));
+        g.feed(venue("D", 2, test::order_fields("A")));
+        g.feed(venue("D", 2, "43=Y|122=20261021-07:29:59.000|" + test::order_fields("A")));
         check(g.k.delivered.size() == 1 && g.k.disconnects == 0 && g.s.next_expected() == 3,
               "2e: PossDupFlag Y, OrigSendingTime before SendingTime, MsgSeqNum lower than expected (already received): ignored");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "43=Y|122=20261021-07:30:05.000|11=A|"));
+        f.feed(venue("D", 2, "43=Y|122=20261021-07:30:05.000|" + test::order_fields("A")));
         check(rejected(f, 2, 10, 122, 3), "2f: PossDupFlag Y, OrigSendingTime after SendingTime: Reject 10, number consumed");
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "43=Y|11=A|"));
+        f.feed(venue("D", 2, "43=Y|" + test::order_fields("A")));
         check(rejected(f, 2, 1, 122, 3), "2g: PossDupFlag Y, OrigSendingTime missing: Reject 1, number consumed");
     }
     {
@@ -391,7 +394,7 @@ void scenarios_4_to_8() {
     }
     {
         logged_on f;
-        f.s.send("D", test::soh("11=O1|55=VOD.L|54=1|38=100|40=1|"), at(1));
+        f.s.send("D", test::soh(test::order_fields("O1")), at(1));
         f.feed(venue("2", 2, "7=1|16=0|"));
         const auto n = f.k.written.size();
         check(n >= 4 && type(f.k.written[n - 2]) == "4" && field(f.k.written[n - 2], 123) == "Y" &&
@@ -566,6 +569,23 @@ void scenario_14() {
     }
 }
 
+void scenario_14m() {
+    {
+        logged_on f(acceptor_logged_on());
+        f.feed(client("D", 2, "11=L1|55=VOD.L|54=1|60=20261021-07:30:00.000|38=100|40=2|"));
+        const std::string m = f.last();
+        check(type(m) == "j" && field(m, 45) == "2" && field(m, 372) == "D" && field(m, 380) == "5" &&
+                  field(m, 58).ends_with("44") && f.s.next_expected() == 3 && f.k.delivered.empty(),
+              "14m: a limit NewOrderSingle without Price: BusinessMessageReject 5 naming tag 44, number consumed");
+    }
+    {
+        logged_on f;
+        f.feed(venue("8", 2, "37=X1|11=O1|17=E1|150=F|39=2|55=VOD.L|54=1|31=72.5|151=0|14=100|6=72.5|"));
+        check(type(f.last()) == "j" && field(f.last(), 380) == "5" && field(f.last(), 58).ends_with("32") && f.k.delivered.empty(),
+              "14m: a fill (ExecType Trade) without LastQty: BusinessMessageReject 5 naming tag 32");
+    }
+}
+
 void scenario_15_optional() {
     logged_on f;
     f.feed(test::message("35=0|52=20261021-07:30:00.000|34=2|56=CLIENT|49=VENUE|"));
@@ -577,7 +597,7 @@ void scenario_15_optional() {
 void scenarios_16_19_20() {
     {
         fixture f(initiator_config());
-        const auto r = f.s.send("D", test::soh("11=Q1|"), at(0));
+        const auto r = f.s.send("D", test::soh(test::order_fields("Q1")), at(0));
         f.s.on_connected(at(5));
         f.feed(venue("A", 1, "98=0|108=30|"), 5);
         check(r == send_result::queued, "16a: an order while disconnected: queued, unnumbered");
@@ -587,7 +607,7 @@ void scenarios_16_19_20() {
     }
     {
         logged_on f;
-        f.feed(venue("D", 2, "97=Y|11=A|"));
+        f.feed(venue("D", 2, "97=Y|" + test::order_fields("A")));
         check(f.k.delivered.size() == 1, "19b: PossResend Y, not seen before: accepted and delivered");
     }
     {
@@ -611,6 +631,7 @@ int main() {
     scenarios_10_11();
     scenarios_12_13();
     scenario_14();
+    scenario_14m();
     scenario_15_optional();
     scenarios_16_19_20();
     return test::result();

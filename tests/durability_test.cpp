@@ -46,9 +46,9 @@ std::string exchange(J& j) {
     l.peer.on_connected(at(0));
     us.on_connected(at(0));
     l.pump(us, w, 0);
-    for (int i = 0; i < 3; ++i) us.send("D", test::soh("11=O" + std::to_string(i) + "|55=VOD.L|"), at(1));
-    l.peer.send("8", test::soh("37=X1|17=E1|150=0|39=0|"), at(2));
-    l.peer.send("8", test::soh("37=X2|17=E2|150=0|39=0|"), at(2));
+    for (int i = 0; i < 3; ++i) us.send("D", test::soh(test::order_fields("O" + std::to_string(i))), at(1));
+    l.peer.send("8", test::soh(test::report_fields("O1", "E1")), at(2));
+    l.peer.send("8", test::soh(test::report_fields("O2", "E2")), at(2));
     l.pump(us, w, 2);
     us.on_tick(at(31));
     l.pump(us, w, 31);
@@ -110,10 +110,10 @@ void group_bounds(const std::string& dir) {
     us.poll({5'000'000, base_ms + 5});
     w.sent.clear();
     const session_time t{10'000'000, base_ms + 10};
-    us.send("D", test::soh("11=G1|"), t);
-    us.send("D", test::soh("11=G2|"), t);
+    us.send("D", test::soh(test::order_fields("G1")), t);
+    us.send("D", test::soh(test::order_fields("G2")), t);
     const bool held_two = w.sent.empty() && us.holding();
-    us.send("D", test::soh("11=G3|"), t);
+    us.send("D", test::soh(test::order_fields("G3")), t);
     const auto a = w.sent.find("11=G1"), b = w.sent.find("11=G2"), c = w.sent.find("11=G3");
     check(held_two && !us.holding() && a != std::string::npos && a < b && b < c,
           "B: two orders held, the third fills the group: all three released, in order");

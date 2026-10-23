@@ -39,6 +39,17 @@ inline std::string message(const std::string& body, int body_length_delta = 0, i
     return m + t;
 }
 
+// The body fields of a NewOrderSingle FIX 4.4 accepts (note 007, D8): a market
+// order for 100 VOD.L. '|' for SOH, as message() takes.
+inline std::string order_fields(const std::string& cl_ord_id) {
+    return "11=" + cl_ord_id + "|55=VOD.L|54=1|60=20261021-09:30:00.000|38=100|40=1|";
+}
+
+// The body fields of an ExecutionReport acknowledging it (ExecType New).
+inline std::string report_fields(const std::string& cl_ord_id, const std::string& exec_id) {
+    return "37=X-" + cl_ord_id + "|11=" + cl_ord_id + "|17=" + exec_id + "|150=0|39=0|55=VOD.L|54=1|151=100|14=0|6=0|";
+}
+
 // A NewOrderSingle body, as an order path would send it.
 inline std::string new_order_body(int seq = 1) {
     return "35=D|49=CLIENT|56=VENUE|34=" + std::to_string(seq) +

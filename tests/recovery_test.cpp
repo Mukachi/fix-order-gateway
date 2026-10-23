@@ -55,9 +55,9 @@ void recovery(const std::string& dir) {
     l.pump(us, w, 0);
     check(us.state().state() == session_state::active && l.peer.state() == session_state::active,
           "a journaled initiator logs on with a plain acceptor");
-    for (int i = 0; i < 3; ++i) us.send("D", test::soh("11=O" + std::to_string(i) + "|55=VOD.L|"), at(1));
-    l.peer.send("8", test::soh("37=X1|17=E1|150=0|39=0|"), at(2));
-    l.peer.send("8", test::soh("37=X2|17=E2|150=0|39=0|"), at(2));
+    for (int i = 0; i < 3; ++i) us.send("D", test::soh(test::order_fields("O" + std::to_string(i))), at(1));
+    l.peer.send("8", test::soh(test::report_fields("O1", "E1")), at(2));
+    l.peer.send("8", test::soh(test::report_fields("O2", "E2")), at(2));
     l.pump(us, w, 2);
     const int appends_before_ticks = j.appends;
     us.on_tick(at(3));  // nothing due
@@ -101,7 +101,7 @@ void recovery(const std::string& dir) {
     l.peer.on_connected(at(41));
     again.on_connected(at(41));
     l.pump(again, w2, 41);
-    again.send("D", test::soh("11=AFTER|55=VOD.L|"), at(42));
+    again.send("D", test::soh(test::order_fields("AFTER")), at(42));
     l.pump(again, w2, 42);
     check(again.state().state() == session_state::active && l.peer.state() == session_state::active && l.ps.delivered == 4 &&
               again.state().next_outbound() == out + 2,
@@ -110,7 +110,7 @@ void recovery(const std::string& dir) {
     // D1: if the journal fails, nothing is released.
     j2.fail = true;
     const auto sent_before = w2.sent.size();
-    again.send("D", test::soh("11=LOST|55=VOD.L|"), at(43));
+    again.send("D", test::soh(test::order_fields("LOST")), at(43));
     check(w2.sent.size() == sent_before && w2.disconnects == 1 && again.failed(),
           "D1: the journal fails: the order is not sent, the connection is closed");
 }

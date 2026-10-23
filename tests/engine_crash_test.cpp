@@ -81,7 +81,7 @@ int submitted_before(const std::string& path) {
 
 void submit_rest(app_ring& in, int from, int doorbell) {
     for (int i = from; i < orders; ++i) {
-        while (!submit_order(in, "D", test::soh("11=O" + std::to_string(i) + "|55=VOD.L|54=1|38=100|40=1|"), doorbell)) {
+        while (!submit_order(in, "D", test::soh(test::order_fields("O" + std::to_string(i))), doorbell)) {
         }
         ::usleep(500);
     }

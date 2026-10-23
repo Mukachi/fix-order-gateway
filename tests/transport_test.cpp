@@ -145,18 +145,18 @@ void s1_and_s4() {
     check(logged_on, "logon over TCP");
 
     constexpr int n = 20'000;  // ~2.4 MB: more than the kernel's buffers (twice what is asked, each end) can absorb
-    for (int i = 0; i < n; ++i) us.send("D", test::soh("11=O" + std::to_string(i) + "|55=VOD.L|54=1|38=100|40=1|"), now());
+    for (int i = 0; i < n; ++i) us.send("D", test::soh(test::order_fields("O" + std::to_string(i))), now());
     const bool all_in = pump(us, uc, ui, them, tc, ti, [&] { return ts.ids.size() == n; });
     bool order = all_in;
     for (int i = 0; order && i < n; ++i) order = ts.ids[static_cast<std::size_t>(i)] == "O" + std::to_string(i);
     check(order && uc.peak_pending() > 0 && !out.failed,
           "S1: " + std::to_string(n) + " orders in a burst through 128 KB buffers, read 97 bytes at a time: all arrive, intact, in order (up to " +
               std::to_string(uc.peak_pending()) + " bytes kept for the kernel)");
-    for (int i = 0; i < n; ++i) them.send("8", test::soh("37=X" + std::to_string(i) + "|17=E" + std::to_string(i) + "|150=0|39=0|"), now());
+    for (int i = 0; i < n; ++i) them.send("8", test::soh(test::report_fields("O" + std::to_string(i), "E" + std::to_string(i))), now());
     const bool back = pump(us, uc, ui, them, tc, ti, [&] { return out.delivered.size() == n; });
     bool reports = back;
     for (int i = 0; reports && i < n; ++i)
-        reports = out.delivered[static_cast<std::size_t>(i)].find("\x01" "37=X" + std::to_string(i) + "\x01") != std::string::npos;
+        reports = out.delivered[static_cast<std::size_t>(i)].find("\x01" "37=X-O" + std::to_string(i) + "\x01") != std::string::npos;
     check(reports && tc.peak_pending() > 0, "S1: " + std::to_string(n) + " ExecutionReports the other way: all, in order");
 
     // S4: the counterparty drops the connection; we reconnect and log on again.
@@ -184,7 +184,7 @@ void s1_and_s4() {
     const bool again = pump(us, uc, ui, them, tc, ti, [&] {
         return us.state().state() == session_state::active && them.state() == session_state::active;
     });
-    us.send("D", test::soh("11=AFTER|55=VOD.L|54=1|38=100|40=1|"), now());
+    us.send("D", test::soh(test::order_fields("AFTER")), now());
     const bool after = pump(us, uc, ui, them, tc, ti, [&] { return ts.ids.size() == n + 1; });
     check(again && after && ts.ids.back() == "AFTER" && us.state().next_outbound() == next_before + 2,
           "S4: reconnected, logged on with the numbers continuing, the next order delivered");

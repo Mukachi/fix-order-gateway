@@ -77,11 +77,11 @@ bool exchange(tcp_listener& l, app_ring& in, app_ring& out, Connected connected,
         while ((r = vc.read_some(b, sizeof(b))) > 0) inbox.append(b, static_cast<std::size_t>(r));
         if (!inbox.empty()) inbox.erase(0, v.on_bytes(inbox.data(), inbox.size(), clock_now()));
         for (const auto& id : vs.to_answer)
-            v.send("8", test::soh("37=X-" + id + "|11=" + id + "|17=E-" + id + "|150=0|39=0|"), clock_now());
+            v.send("8", test::soh(test::report_fields(id, "E-" + id)), clock_now());
         vs.to_answer.clear();
         vc.flush();
         if (connected() && v.state() == session_state::active && submitted < warm + n && submitted - received < 16 &&
-            submit_order(in, "D", test::soh("11=O" + std::to_string(submitted) + "|55=VOD.L|54=1|38=100|40=1|")))
+            submit_order(in, "D", test::soh(test::order_fields("O" + std::to_string(submitted)))))
             ++submitted;
         app_slot s;
         while (out.try_pop(s))
