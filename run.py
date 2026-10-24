@@ -29,7 +29,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-SETS = ("codec", "store", "net")
+SETS = ("codec", "store", "net", "order", "order_qf", "stage", "stage_qf")
 BLOCK = re.compile(r"(<!-- results:(?P<name>[a-z0-9-]+) -->\n)(?P<body>.*?)(<!-- /results -->)", re.S)
 MEAN = re.compile(r"\b(mean|average|avg)\b", re.I)
 
@@ -343,6 +343,102 @@ def net_section(lf, note, runs):
             lf.table(header, net_rows(lf, groups)), ""]
 
 
+def order_points(runs, block):
+    """Each point by (gateway, loop, journal, wait, rate), its figures across the set's runs."""
+    points = {}
+    for f, d in runs:
+        for p in d[block]["points"]:
+            key = (p["gateway"], p["loop"], p["journal"], p["wait"], p["rate_per_s"])
+            points.setdefault(key, []).append(p)
+    return points
+
+
+def sustained(p):
+    return p["complete"] and p["sustained_per_s"] >= 0.95 * p["rate_per_s"]
+
+
+def config_name(key):
+    gateway, loop, journal, wait, _ = key
+    if gateway == "quickfix":
+        return f"QuickFIX 1.16.0, {journal}"
+    return f"ours, {loop}, journal {journal}, {wait}"
+
+
+def order_rows(lf, sets, rates=None, figures=("p50_ns", "p99_ns", "p999_ns", "max_ns")):
+    """Rows for every configuration and rate measured in every run of its set; a
+    rate not sustained in every run says so instead of giving a latency (S5)."""
+    rows, highest, partial = [], {}, []
+    for name in ("order", "order_qf"):
+        if name not in sets:
+            continue
+        runs = sets[name][1]
+        for key, ps in order_points(runs, name).items():
+            cfg = key[:4]
+            if len(ps) < len(runs):
+                partial.append(f"{config_name(key)} at {key[4]:,.0f}/s")
+                continue
+            ok = all(sustained(p) for p in ps)
+            if ok:
+                highest[cfg] = max(highest.get(cfg, 0), key[4])
+            if rates is not None and key[4] not in rates:
+                continue
+            cells = [lf.rng([p[f] for p in ps]) for f in figures] if ok else ["not sustained"] * len(figures)
+            venue = lf.rng([p["venue_p50_ns"] for p in ps]) if all(p["venue_read"] for p in ps) else "-"
+            rows.append([config_name(key), ps[0]["survives"], f"{key[4]:,.0f}"] + cells + [venue])
+    return rows, highest, partial
+
+
+def order_section(lf, sets):
+    rows, highest, partial = order_rows(lf, sets)
+    notes = [sets[n][0] for n in ("order", "order_qf") if n in sets]
+    counts = "; ".join(f"{n}: {len(sets[n][1])} runs" for n in ("order", "order_qf") if n in sets)
+    peak = "; ".join(f"{config_name(k + (0,))}: {v:,.0f}/s" for k, v in highest.items())
+    out = [f"## Order to ExecutionReport (note {notes[0]})", "",
+           "Application to application, open loop: limit NewOrderSingles submitted on a fixed schedule, latency from each "
+           "order's scheduled time to its ExecutionReport (New) reaching the application; 100,000 orders a point after 5,000 "
+           "of warm-up; over loopback to order_venue (our venue simulator behind an acceptor session, its own process, "
+           "busy-polling on its own core), the same venue for both gateways. Ours: the application on CPU 2, the engine on 4 "
+           "(the pipeline's journal and sender stages on 6 and 8). QuickFIX: a program written to its documented API, the "
+           "application thread on CPU 2 and its other threads confined to as many reserved CPUs as there are. 'Survives' "
+           "is the configuration's guarantee: QuickFIX's file store never syncs (counted: 0 fsync and 0 fdatasync calls), so "
+           "it survives a process crash like our journal C; our journal A makes each input durable with fdatasync first and "
+           "survives power loss, which QuickFIX documents no setting for. 'Venue p50' is the venue's own turnaround, read "
+           f"to written. {counts}.", "",
+           lf.table(["Configuration", "Survives", "Offered /s", "p50", "p99", "p99.9", "max", "Venue p50"], rows), "",
+           f"Highest rate sustained in every run: {peak}.", ""]
+    if partial:
+        out += [f"Measured in only some runs, so not published: {'; '.join(partial)}.", ""]
+    return out
+
+
+def stage_rows(lf, sets):
+    rows = []
+    for name, who in (("stage", "ours"), ("stage_qf", "QuickFIX 1.16.0")):
+        if name not in sets:
+            continue
+        runs = sets[name][1]
+        for i, p0 in enumerate(runs[0][1][name]["points"]):
+            ps = [d[name]["points"][i] for _, d in runs]
+            if any(p["stage"] != p0["stage"] for p in ps):
+                raise ReportError(f"{name}: runs measured different stages")
+            if not all(p["all_correct"] for p in ps):
+                raise ReportError(f"{name}: a run's stage '{p0['stage']}' was not correct for every message")
+            rows.append([who, p0["direction"], p0["stage"]] + [lf.rng([p[f] for p in ps]) for f in ("p50_ns", "p99_ns", "p999_ns")])
+    return rows
+
+
+def stage_section(lf, sets):
+    note = (sets.get("stage") or sets.get("stage_qf"))[0]
+    counts = "; ".join(f"{n}: {len(sets[n][1])} runs" for n in ("stage", "stage_qf") if n in sets)
+    return [f"## The gateway's cost per message, by stage (note {note})", "",
+            "In process, no network: each call timed between start() and stop() on CPU 2, unsubtracted, beside an empty "
+            "window ('none') for the clock's own cost; 100,000 different messages after 10,000 of warm-up, visited in order "
+            "(sequence numbers and ExecIDs advance), the same bytes for both (bench/stage_inputs.hpp). What a stage needs but "
+            "does not own (decoding, before a check that reads a decoded message) is done outside its window. QuickFIX's "
+            f"reference: a FIX::Message constructed from the same bytes with its FIX 4.4 dictionary validating. {counts}.", "",
+            lf.table(["Gateway", "Message", "Stage", "p50", "p99", "p99.9"], stage_rows(lf, sets)), ""]
+
+
 def results_md(lf, sets, withheld):
     lines = ["# Results", "",
              "Generated by `python run.py report` from the runs listed in `results/published.toml`. "
@@ -358,6 +454,12 @@ def results_md(lf, sets, withheld):
                 lines += store_section(lf, note, runs)
             elif name == "net":
                 lines += net_section(lf, note, runs)
+            elif name in ("order", "order_qf"):
+                if name == "order" or "order" not in sets:
+                    lines += order_section(lf, sets)
+            elif name in ("stage", "stage_qf"):
+                if name == "stage" or "stage" not in sets:
+                    lines += stage_section(lf, sets)
             else:
                 lines += (state_section(lf, note, runs, withheld[name]) if is_episodes(runs)
                           else codec_section(lf, note, runs))
@@ -381,6 +483,22 @@ def readme_blocks(lf, sets, withheld):
                                  "[RESULTS.md](RESULTS.md).\n")
     else:
         blocks["net-summary"] = "Transport figures: not yet measured (design note 005).\n"
+    if "order" in sets or "order_qf" in sets:
+        rows, highest, _ = order_rows(lf, sets, rates=(1000.0, 10000.0), figures=("p50_ns", "p99_ns"))
+        peak = "; ".join(f"{config_name(k + (0,))} {v:,.0f}/s" for k, v in highest.items())
+        blocks["order-summary"] = (lf.table(["Configuration", "Survives", "Offered /s", "p50", "p99", "Venue p50"], rows)
+                                   + f"\n\nOrder to ExecutionReport, application to application, open loop, ns, range over the "
+                                   f"runs. Highest rate sustained: {peak}. The guarantees, the method and every rate: "
+                                   "[RESULTS.md](RESULTS.md).\n")
+    else:
+        blocks["order-summary"] = "Order-to-ExecutionReport figures: not yet measured (design note 008).\n"
+    if "stage" in sets or "stage_qf" in sets:
+        rows = [r[:3] + r[3:4] for r in stage_rows(lf, sets) if r[2] != "none"]
+        blocks["stage-summary"] = (lf.table(["Gateway", "Message", "Stage", "p50"], rows)
+                                   + "\n\nNs per call, in process, range over the runs, clock cost included. Method: "
+                                   "[RESULTS.md](RESULTS.md).\n")
+    else:
+        blocks["stage-summary"] = "Per-message figures: not yet measured (design note 008).\n"
     return blocks
 
 

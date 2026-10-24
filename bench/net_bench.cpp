@@ -154,7 +154,7 @@ void drive(fx::app_ring& in, fx::app_ring& out, double rate, double tpn, Connect
     ticks t0 = 0;
     for (std::size_t i = 0; i < n; ++i) {
         if (i == 0) {  // the first order waits for the session; the schedule starts when it is back
-            body = "11=0\x01" "55=VOD.L\x01" "54=1\x01" "38=100\x01" "40=2\x01" "44=72.53\x01" "59=0\x01";
+            body = "11=0\x01" "55=VOD.L\x01" "54=1\x01" "60=20261024-00:00:00.000\x01" "38=100\x01" "40=2\x01" "44=72.53\x01" "59=0\x01";
             due[0] = start();
             while (!fx::submit_order(in, "D", body)) {
             }
@@ -164,7 +164,7 @@ void drive(fx::app_ring& in, fx::app_ring& out, double rate, double tpn, Connect
         }
         due[i] = t0 + interval * (i - 1);
         while (start() < due[i]) collect(received);
-        body = "11=" + std::to_string(i) + "\x01" "55=VOD.L\x01" "54=1\x01" "38=100\x01" "40=2\x01" "44=72.53\x01" "59=0\x01";
+        body = "11=" + std::to_string(i) + "\x01" "55=VOD.L\x01" "54=1\x01" "60=20261024-00:00:00.000\x01" "38=100\x01" "40=2\x01" "44=72.53\x01" "59=0\x01";
         while (!fx::submit_order(in, "D", body)) collect(received);
     }
     const ticks give_up = start() + static_cast<ticks>(5e9 * tpn);

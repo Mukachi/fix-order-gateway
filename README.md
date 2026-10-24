@@ -61,3 +61,15 @@ Order arrival to release of its bytes, ns, at 1,000 orders a second, range over 
 
 Range over the runs of each path. Conditions, p99 and the method: [RESULTS.md](RESULTS.md).
 <!-- /results -->
+
+Against QuickFIX, order to ExecutionReport ([note 008](docs/design/008-measurement.md)):
+
+<!-- results:order-summary -->
+Order-to-ExecutionReport figures: not yet measured (design note 008).
+<!-- /results -->
+
+The gateway's own cost per message, by stage:
+
+<!-- results:stage-summary -->
+Per-message figures: not yet measured (design note 008).
+<!-- /results -->
