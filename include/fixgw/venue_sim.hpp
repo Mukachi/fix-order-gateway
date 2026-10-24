@@ -27,11 +27,15 @@ __extension__ using sim_wide = __int128;  // a fill's value, price x quantity, b
 struct venue_config {
     bool pending_acks = true;          // PendingCancel / PendingReplace before the result
     bool cancel_on_disconnect = true;  // a session's live orders canceled when it disconnects
+    // Orders reserved at construction, and per side of each book (0: grow as
+    // needed). Growing a vector of orders past its capacity moves them all at
+    // once: milliseconds at 65,000 orders, which set note 008's first maxima.
+    std::size_t capacity = 0;
 };
 
 class venue_sim {
 public:
-    explicit venue_sim(const venue_config& c = {}) : cfg_(c) {}
+    explicit venue_sim(const venue_config& c = {}) : cfg_(c) { orders_.reserve(c.capacity); }
 
     // Resting liquidity from no session (its fills are not reported).
     void seed(std::string_view symbol, char side, fixed price, fixed qty) {
@@ -307,6 +311,10 @@ private:
     void rest(std::size_t i) {
         const order& o = orders_[i];
         side_book& b = books_[o.symbol];
+        if (b.bids.capacity() < cfg_.capacity) {  // a new book: reserved, as the orders are
+            b.bids.reserve(cfg_.capacity);
+            b.asks.reserve(cfg_.capacity);
+        }
         std::vector<std::size_t>& v = o.side == '1' ? b.bids : b.asks;
         const auto better = [&](std::size_t a, std::size_t c) {
             const order &x = orders_[a], &y = orders_[c];

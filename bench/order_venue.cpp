@@ -93,7 +93,9 @@ int main(int argc, char** argv) {
         }
         tcp_connection c(64u << 20);
         c.attach(fd);
-        venue_sim sim;  // a book per connection: each point starts empty
+        venue_config vc;
+        vc.capacity = 1u << 18;  // more than a point's orders: no vector grows during it
+        venue_sim sim(vc);  // a book per connection: each point starts empty
         store st;
         sink sk;
         sk.c = &c;
