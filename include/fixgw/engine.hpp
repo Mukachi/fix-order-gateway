@@ -36,7 +36,7 @@ struct app_slot {
         order_state = 4,     // from: an order_event (its state, or not sent), in `data`
         replayed_state = 5,  // from: the same, in recovery
         refused = 6,         // from: an order_event: a request refused before it left
-        logout = 7,          // to the engine: log out, do not reconnect, then stop
+        logout = 7,          // to the engine: log out once logged on and caught up, then stop
     };
     std::uint8_t kind;
     std::uint8_t type_length;  // order: its MsgType's length
@@ -69,8 +69,10 @@ inline bool submit_order(app_ring& ring, std::string_view msg_type, std::string_
     return true;
 }
 
-// The application's logout: the session logs out, the engine does not
-// reconnect and its run ends once disconnected (note 007).
+// The application's logout: once the session is logged on and caught up
+// (reconnecting first if it must, so nothing is left in doubt), it logs out;
+// the engine does not reconnect after, and its run ends once disconnected
+// (note 007).
 inline bool submit_logout(app_ring& ring, int doorbell = -1) {
     app_slot s;
     s.kind = app_slot::logout;
@@ -160,8 +162,9 @@ public:
     // Whether a connection is up: safe from any thread (the connection itself
     // is the engine thread's alone).
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
-    // The application asked to log out, and the connection is gone.
-    bool finished() const noexcept { return logging_out_ && !conn_.open() && connecting_ < 0; }
+    // The application asked to log out, and the connection is gone: safe from
+    // any thread (the engine thread publishes it).
+    bool finished() const noexcept { return finished_.load(std::memory_order_acquire); }
 
     // Recovery before the loop starts (note 004): every message replayed goes
     // to the application's ring marked replayed.
@@ -179,7 +182,9 @@ public:
     // moved anything (the spin_then_block mode counts from the last such pass).
     bool step(session_time now) {
         bool moved = false;
-        if (initiator_ && !conn_.open() && !logging_out_) moved |= try_connect(now);
+        // After a logout is sent, no reconnecting; before, the session must
+        // reconnect and catch up first, so nothing is left in doubt.
+        if (initiator_ && !conn_.open() && !(logging_out_ && !logout_pending_)) moved |= try_connect(now);
         if (connecting_ >= 0) moved |= finish_connect(now);
         if (conn_.open() && connecting_ < 0) {
             char buf[16 << 10];
@@ -194,9 +199,8 @@ public:
         app_slot s;
         while (in_.try_pop(s)) {
             moved = true;
-            if (s.kind == app_slot::logout) {
-                us_.logout("", now);
-                logging_out_ = true;
+            if (s.kind == app_slot::logout) {  // sent once logged on and caught up (below)
+                logging_out_ = logout_pending_ = true;
                 continue;
             }
             const std::string_view body(s.data, s.length);
@@ -204,11 +208,16 @@ public:
                 push_out(event_slot(refusal_event(body, us_.last_refusal()), app_slot::refused));
         }
         us_.on_tick(now);
+        if (logout_pending_ && us_.state().state() == session_state::active) {
+            us_.logout_when_synced(now);
+            logout_pending_ = false;
+        }
         us_.poll(now);
         if (conn_.open() && conn_.pending() > 0 && !conn_.flush()) lost(now);
         moved |= drain_overflow();
         if (us_.state().state() == session_state::active) backoff_.reset();
         connected_.store(conn_.open() && connecting_ < 0, std::memory_order_release);
+        finished_.store(logging_out_ && !logout_pending_ && !conn_.open() && connecting_ < 0, std::memory_order_release);
         return moved;
     }
 
@@ -277,6 +286,9 @@ private:
         }
     }
     void lost(session_time now) {
+        // Our Logout unanswered when the connection went: not logged out yet;
+        // reconnect, catch up and log out again (nothing left in doubt).
+        if (logging_out_ && us_.state().logging_out()) logout_pending_ = true;
         if (conn_.open()) ::epoll_ctl(epoll_, EPOLL_CTL_DEL, conn_.fd(), nullptr);
         conn_.close();
         inbox_.clear();
@@ -325,8 +337,8 @@ private:
     app_ring& out_;
     bool initiator_;
     int connecting_ = -1, doorbell_ = -1, epoll_ = -1;
-    bool not_reading_ = false, logging_out_ = false;
-    std::atomic<bool> connected_{false};
+    bool not_reading_ = false, logging_out_ = false, logout_pending_ = false;
+    std::atomic<bool> connected_{false}, finished_{false};
     backoff backoff_;
     std::string inbox_;
     std::deque<app_slot> overflow_;

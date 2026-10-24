@@ -1,11 +1,10 @@
 // Subjects for check_hot_path.py, which disassembles this binary: the codec's
 // hot paths behind fixed, unmangled symbols. Spec: docs/design/002-codec.md (S6)
+// Only the codec here: inlining is decided per file, and the session's and
+// the order book's code, in files of their own, would change it.
 #include <fixgw/decode.hpp>
 #include <fixgw/encode.hpp>
 #include <fixgw/framing.hpp>
-#include <fixgw/durability.hpp>
-#include <fixgw/journal.hpp>
-#include <fixgw/session.hpp>
 
 #include <cstdio>
 
@@ -77,41 +76,6 @@ extern "C" [[gnu::noinline]] std::size_t fixgw_encode_c(fixgw::new_order_templat
 // The session (note 003, S6): a sink and store that keep nothing, so the
 // check sees only the session's own code. Everything reachable from these two
 // symbols is checked.
-struct quiet_sink {
-    std::size_t bytes = 0, delivered = 0;
-    void write(std::string_view b) { bytes += b.size(); }
-    void disconnect() {}
-    void deliver(const fixgw::message_view<>&) { ++delivered; }
-    void log(fixgw::session_log, std::string_view, std::uint64_t) {}
-    bool resend(const fixgw::message_view<>&) { return true; }
-    bool release(std::string_view, std::string_view) { return true; }
-};
-struct quiet_store {
-    void record(std::uint64_t, std::string_view) {}
-    std::string_view lookup(std::uint64_t) { return {}; }
-    void reset() {}
-};
-using hot_session = fixgw::session<quiet_sink, quiet_store>;
-extern "C" [[gnu::noinline]] std::size_t fixgw_session_inbound(hot_session& s, const char* p, std::size_t n,
-                                                               fixgw::session_time now) {
-    return s.on_bytes(p, n, now);
-}
-extern "C" [[gnu::noinline]] int fixgw_session_send(hot_session& s, const char* body, std::size_t n,
-                                                    fixgw::session_time now) {
-    return static_cast<int>(s.send("D", std::string_view(body, n), now));
-}
-
-// The journal (note 004, S6): appending a record to a file (A, B and D
-// append so) and to a mapping (C).
-extern "C" [[gnu::noinline]] bool fixgw_journal_append(fixgw::journal_file& f, const char* p, std::size_t n,
-                                                       fixgw::session_time t) {
-    return f.append(fixgw::record_kind::bytes, t, std::string_view(p, n));
-}
-extern "C" [[gnu::noinline]] bool fixgw_mapped_append(fixgw::mapped_journal& j, const char* p, std::size_t n,
-                                                      fixgw::session_time t) {
-    return j.append(fixgw::record_kind::bytes, t, std::string_view(p, n), {});
-}
-
 int main(int argc, char**) {
     char buf[512];
     const std::size_t n = fixgw_encode_b(buf, sizeof(buf), static_cast<std::uint64_t>(argc), 100, 7253);

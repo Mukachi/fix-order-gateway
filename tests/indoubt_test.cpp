@@ -237,7 +237,7 @@ const char* name(mode m) { return m == mode::kill ? "killed" : m == mode::drop ?
 struct outcome {
     bool completed = false;
     std::string why;
-    int not_sent = 0, failures = 0, kills = 0, drops = 0;
+    int not_sent = 0, failures = 0, kills = 0, drops = 0, logouts = 0;
     std::map<char, int> venue_states;  // the venue's final OrdStatus of each order: how far the run reached
 };
 
@@ -264,12 +264,15 @@ outcome run(bool pipeline, mode md, std::mt19937& rng, const std::string& dir) {
     vs.send = [&](std::string_view t, const std::string& b) { peer.send(t, b, clock_now()); };
     outcome o;
     std::map<std::string, venue_sim::order_view> truth;
-    bool truth_taken = false;
+    bool truth_taken = false, was_replied = false;
+    const std::int64_t run_start = clock_now().mono_ns;
+    std::int64_t truth_at_ms = 0, run_ms = 0;
     const int kills = md == mode::kill ? 1 + static_cast<int>(rng() % 3) : 0;
     int takers = 0;
     std::int64_t next_taker = 0, hold_until = 0;
     int drops = md == mode::kill ? 0 : 1 + static_cast<int>(rng() % 2);
     for (int g = 0; g <= kills; ++g) {
+        std::fflush(stdout);  // or the child inherits, and repeats, unwritten output
         const pid_t pid = ::fork();
         if (pid == 0) child(pipeline, path, g > 0, l.port(), result);
         bool killing = g < kills;
@@ -294,11 +297,19 @@ outcome run(bool pipeline, mode md, std::mt19937& rng, const std::string& dir) {
                 long n;
                 while ((n = pc.read_some(b, sizeof(b))) > 0) inbox.append(b, static_cast<std::size_t>(n));
                 if (!inbox.empty()) inbox.erase(0, peer.on_bytes(inbox.data(), inbox.size(), now));
-                if (peer.state() == session_state::logout_replied && !truth_taken) {  // our Logout: the venue's view now
+                // Each Logout of ours: the venue's view then; the last one is the
+                // application's (a Logout the session sends to end a bad
+                // connection may come earlier, and recovery follows it).
+                const bool replied = peer.state() == session_state::logout_replied;
+                if (replied && !was_replied) {
+                    truth.clear();
                     for (int i = 0; i < orders; ++i)
                         if (const auto v = sim.state(1, "O" + std::to_string(i))) truth["O" + std::to_string(i)] = *v;
                     truth_taken = true;
+                    ++o.logouts;
+                    truth_at_ms = (now.mono_ns - run_start) / 1'000'000;
                 }
+                was_replied = replied;
                 if (n < 0) {
                     pc.close();
                     peer.on_disconnected(now);
@@ -358,6 +369,7 @@ outcome run(bool pipeline, mode md, std::mt19937& rng, const std::string& dir) {
             return o;
         }
     }
+    run_ms = (clock_now().mono_ns - run_start) / 1'000'000;
     if (!o.completed) {
         if (o.why.empty()) o.why = "did not complete";
         return o;
@@ -378,7 +390,10 @@ outcome run(bool pipeline, mode md, std::mt19937& rng, const std::string& dir) {
         } else if (st == '-') {
             if (it != truth.end()) bad = "the venue has it, our book does not";
         } else if (it == truth.end()) {
-            if (st != ord_status::rejected) bad = "our book has it (" + std::string(1, st) + "), the venue does not";
+            if (st != ord_status::rejected)
+                bad = "our book has it (" + std::string(1, st) + "), the venue does not at our Logout (" +
+                      (sim.state(1, id) ? "it does at the end" : "nor at the end") + "; " + std::to_string(o.logouts) +
+                      " Logouts, the view taken at +" + std::to_string(truth_at_ms) + " ms of " + std::to_string(run_ms) + ")";
         } else if (it->second.status != st || it->second.cum / fixed_one != cum || it->second.leaves / fixed_one != leaves) {
             bad = std::string("ours ") + st + " " + std::to_string(cum) + "/" + std::to_string(leaves) + ", the venue's " +
                   it->second.status + " " + std::to_string(it->second.cum / fixed_one) + "/" +

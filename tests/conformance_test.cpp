@@ -531,6 +531,14 @@ void scenario_14() {
         check(rejected(f, 2, 5, 123, 3), "14e: value not one of the enumerated values (GapFillFlag X): Reject 5");
     }
     {
+        logged_on f(acceptor_logged_on());
+        f.feed(client("D", 2, test::order_fields("U1") + "847=1001|"));
+        f.feed(client("D", 3, test::order_fields("U2") + "847=999|"));
+        check(f.k.delivered.size() == 1 && type(f.last()) == "3" && field(f.last(), 45) == "3" && field(f.last(), 373) == "5" &&
+                  field(f.last(), 371) == "847",
+              "14e: TargetStrategy 1001 (its union datatype admits 1000 and up, EP311): accepted; 999: Reject 5");
+    }
+    {
         logged_on f;
         f.feed(venue("2", 2, "7=abc|16=0|"));
         check(rejected(f, 2, 6, 7, 3), "14f: value in the wrong format (BeginSeqNo abc): Reject 6");

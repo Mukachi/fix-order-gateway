@@ -118,6 +118,7 @@ public:
     }
 
     void on_disconnected(session_time) {
+        sync_logout_ = false;
         state_ = session_state::disconnected;
         test_pending_ = false;
         gap_target_ = 0;
@@ -210,12 +211,25 @@ public:
     // Starts the logout process (scenario 12).
     void logout(std::string_view why, session_time now) {
         if (state_ != session_state::active && state_ != session_state::resending) return;
+        sync_logout_ = false;
         emit("5", now, [&](encoder& e) {
             if (!why.empty()) e.add(58, why);
         });
         state_ = session_state::logout_sent;
         logout_at_ = now.mono_ns;
     }
+
+    // A logout once the counterparty is in step (note 007): a TestRequest
+    // first, and the Logout when its Heartbeat comes back, so the counterparty
+    // has processed everything sent before it (it holds anything above a gap
+    // until the gap is filled; scenario 16b's check). Only when logged on.
+    void logout_when_synced(session_time now) {
+        if (state_ != session_state::active && state_ != session_state::resending) return;
+        sync_logout_ = true;
+        emit("1", now, [&](encoder& e) { e.add(112, sync_id); });
+    }
+    // A logout asked for and not yet answered (synced or not).
+    bool logging_out() const noexcept { return sync_logout_ || state_ == session_state::logout_sent; }
 
 private:
     struct slot {
@@ -251,6 +265,8 @@ private:
         next_out_ = expected_ = 1;
         store_.reset();
     }
+
+    static constexpr std::string_view sync_id = "LOGOUT-SYNC";
 
     void disconnect() {
         sink_.disconnect();
@@ -532,6 +548,7 @@ private:
     void dispatch(std::uint64_t seq, std::string_view type, session_time now) {
         if (type.size() == 1) switch (type[0]) {
                 case '0':  // Heartbeat
+                    if (sync_logout_ && in_.get(112) == std::string_view(sync_id)) logout("", now);
                     return;
                 case '1': {  // TestRequest
                     const auto id = in_.get(112);
@@ -619,6 +636,9 @@ private:
             gap_target_ = 0;
             sink_.log(session_log::info, "gap filled", expected_);
             flush_queue(now);
+            // the Heartbeat answering a synced logout's TestRequest may have
+            // been in our gap, gap-filled: ask again
+            if (sync_logout_) emit("1", now, [&](encoder& e) { e.add(112, sync_id); });
         }
     }
 
@@ -667,6 +687,9 @@ private:
             resend_stored(now);
         }
         if (fill_from != 0) gap_fill(fill_from, end + 1, now);
+        // A synced logout's TestRequest in the range was gap-filled (an admin
+        // message): ask again, now the counterparty is catching up.
+        if (sync_logout_) emit("1", now, [&](encoder& e) { e.add(112, sync_id); });
     }
 
     void gap_fill(std::uint64_t from, std::uint64_t to, session_time now) {
@@ -715,7 +738,7 @@ private:
     std::uint64_t next_out_ = 1, expected_ = 1, gap_target_ = 0, test_id_ = 0;
     std::int64_t heartbeat_ns_ = 30'000'000'000;
     std::int64_t connected_at_ = 0, last_sent_ = 0, last_recv_ = 0, test_sent_at_ = 0, logout_at_ = 0;
-    bool test_pending_ = false;
+    bool test_pending_ = false, sync_logout_ = false;
     std::vector<slot> queue_;
     std::vector<char> queue_bytes_;
     std::size_t queue_head_ = 0, queue_count_ = 0;

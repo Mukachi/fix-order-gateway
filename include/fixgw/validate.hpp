@@ -159,7 +159,10 @@ inline int check_value(const fix44::field_info& f, std::string_view v) noexcept 
         case kind::month_year:
             return month_year(v) ? 0 : reject_reason::incorrect_data_format;
         case kind::code_set:
-            return in_codes(f, v) ? 0 : reject_reason::value_incorrect;
+            if (in_codes(f, v)) return 0;
+            if (f.union_from && digits(v) && v.size() < 10 && parse_uint(v).value_or(0) >= f.union_from) return 0;  // user-defined
+            if (f.union_qty && decimal(v)) return 0;
+            return reject_reason::value_incorrect;
         case kind::multi_code_set:  // space-separated, each one of the codes
             while (!v.empty()) {
                 const std::size_t sp = v.find(' ');
@@ -223,8 +226,78 @@ inline bool has_dictionary(std::string_view type) noexcept { return detail::find
 // each open group is checked for its entries' count (16) and its fields'
 // order within an entry (15). Required fields are checked at the top level;
 // within an entry only its first field is (it starts the entry).
+namespace detail {
+
+// The fields of a decoded message, in order.
+template <std::size_t N>
+struct view_fields {
+    const message_view<N>& m;
+    std::size_t i = 0;
+    bool next(std::uint32_t& tag, std::string_view& v) noexcept {
+        if (i == m.size()) return false;
+        tag = m[i].tag;
+        v = m.value(i++);
+        return true;
+    }
+    std::optional<std::string_view> get(std::uint32_t tag) const noexcept { return m.get(tag); }
+};
+
+// The fields of a body as the application submits it ("tag=value" SOH ...).
+struct body_fields {
+    std::string_view b;
+    std::size_t i = 0;
+    bool malformed = false;
+    bool next(std::uint32_t& tag, std::string_view& v) noexcept {
+        if (i >= b.size()) return false;
+        std::uint32_t t = 0;
+        std::size_t j = i;
+        while (j < b.size() && b[j] >= '0' && b[j] <= '9' && t < 100'000'000) t = t * 10 + static_cast<std::uint32_t>(b[j++] - '0');
+        const std::size_t end = j < b.size() ? b.find(soh, j) : std::string_view::npos;
+        if (j == i || j >= b.size() || b[j] != '=' || end == std::string_view::npos || end == j + 1) {
+            malformed = true;
+            return false;
+        }
+        tag = t;
+        v = slice(b, j + 1, end - j - 1);
+        i = end + 1;
+        return true;
+    }
+    std::optional<std::string_view> get(std::uint32_t tag) const noexcept {
+        body_fields c{b};
+        std::uint32_t t;
+        std::string_view v;
+        while (c.next(t, v))
+            if (t == tag) return v;
+        return std::nullopt;
+    }
+};
+
+// Header and trailer fields a body does not carry (the session adds them).
+inline constexpr bool session_added(std::uint32_t t) noexcept {
+    return t == 8 || t == 9 || t == 35 || t == 49 || t == 56 || t == 34 || t == 52 || t == 10;
+}
+
+template <class Fields>
+decode_result validate_fields(Fields&& fields, std::string_view type, bool body_only) noexcept;
+
+}  // namespace detail
+
 template <std::size_t N>
 decode_result validate(const message_view<N>& m, std::string_view type) noexcept {
+    return detail::validate_fields(detail::view_fields<N>{m}, type, false);
+}
+
+// An application body about to be sent (note 007): the same checks, but the
+// fields the session adds (header and trailer) are not looked for.
+inline decode_result validate_body(std::string_view type, std::string_view body) noexcept {
+    detail::body_fields f{body};
+    const decode_result r = detail::validate_fields(f, type, true);
+    if (r.ok && f.malformed) return {false, reject_reason::other, 0, "body is not tag=value fields"};
+    return r;
+}
+
+template <class Fields>
+decode_result detail::validate_fields(Fields&& m, std::string_view type, bool body_only) noexcept {
     using namespace fix44;
     const auto fail = [](int reason, std::uint32_t tag, const char* why) noexcept { return decode_result{false, reason, tag, why}; };
     const message_def* def = detail::find_message(type);
@@ -240,9 +313,9 @@ decode_result validate(const message_view<N>& m, std::string_view type) noexcept
     std::size_t depth = 0;
     const auto close_one = [&]() noexcept { --depth; return open[depth].entries == open[depth].declared; };
 
-    for (std::size_t i = 0; i < m.size(); ++i) {
-        const std::uint32_t tag = m[i].tag;
-        const std::string_view v = m.value(i);
+    std::uint32_t tag;
+    std::string_view v;
+    while (m.next(tag, v)) {
         const node* n = detail::find_node(*def, tag);
         if (!n)
             return detail::tag_defined(tag) ? fail(reject_reason::tag_not_defined_for_message_type, tag, "tag not defined for this message type")
@@ -285,7 +358,8 @@ decode_result validate(const message_view<N>& m, std::string_view type) noexcept
     }
     for (std::size_t k = 0; k < def->count; ++k) {
         const node& n = nodes[def->first + k];
-        if (n.parent == no_parent && n.required && !(seen[k / 64] & (std::uint64_t{1} << (k % 64))))
+        if (n.parent == no_parent && n.required && !(seen[k / 64] & (std::uint64_t{1} << (k % 64))) &&
+            !(body_only && detail::session_added(n.tag)))
             return fail(reject_reason::required_tag_missing, n.tag, "required tag missing");
     }
     return {true, 0, 0, nullptr};
@@ -300,8 +374,8 @@ inline constexpr int unsupported_message_type = 3;
 inline constexpr int conditionally_required_field_missing = 5;
 }  // namespace business_reason
 
-template <std::size_t N>
-decode_result conditional_rules(const message_view<N>& m, std::string_view type) noexcept {
+template <class Get>
+decode_result conditional_rules_of(const Get& m, std::string_view type) noexcept {
     const auto missing = [&](std::uint32_t tag) noexcept { return !m.get(tag).has_value(); };
     const auto fail = [](std::uint32_t tag) noexcept {
         return decode_result{false, business_reason::conditionally_required_field_missing, tag, "Conditionally required field missing"};
@@ -326,6 +400,14 @@ decode_result conditional_rules(const message_view<N>& m, std::string_view type)
         }
     }
     return {true, 0, 0, nullptr};
+}
+
+template <std::size_t N>
+decode_result conditional_rules(const message_view<N>& m, std::string_view type) noexcept {
+    return conditional_rules_of(m, type);
+}
+inline decode_result conditional_rules_body(std::string_view type, std::string_view body) noexcept {
+    return conditional_rules_of(detail::body_fields{body}, type);
 }
 
 }  // namespace fixgw

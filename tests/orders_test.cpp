@@ -2,9 +2,11 @@
 // (note 007: D1 states and invariants, D3 duplicates, D4 throttle, D5 stale
 // orders). Spec: docs/design/007-order-entry.md
 #include "fix_text.hpp"
+#include "venue.hpp"
 
 #include <fixgw/decode.hpp>
 #include <fixgw/orders.hpp>
+#include <fixgw/recovery.hpp>
 
 #include <string>
 
@@ -129,6 +131,29 @@ void stale() {
     check(b.may_resend("F", "C2", at_ms(60'000), e), "D5: a cancel of a live order, however old: resent");
 }
 
+void outbound_checked() {
+    // A body the venue would reject never leaves: refused, with the reason.
+    struct out_t {
+        std::string wire;
+        void write(std::string_view b) { wire.append(b); }
+        void deliver(std::string_view, bool) {}
+        void disconnect() {}
+    } out;
+    test::memory_journal j;
+    test::yes y;
+    journaled_session<test::memory_journal, out_t, test::yes> us(test::client(), j, out, y, {256, 1024, 1 << 14});
+    const std::size_t before = out.wire.size();
+    const bool no_price = us.send("D", test::soh("11=L1|55=VOD.L|54=1|60=20261021-07:30:00.000|38=100|40=2|"), at_ms(0)) ==
+                          send_result::refused;
+    const std::string why1 = us.last_refusal().why ? us.last_refusal().why : "";
+    const bool no_side = us.send("D", test::soh("11=L2|55=VOD.L|60=20261021-07:30:00.000|38=100|40=1|"), at_ms(0)) ==
+                         send_result::refused;
+    const std::string why2 = us.last_refusal().why ? us.last_refusal().why : "";
+    check(no_price && no_side && out.wire.size() == before && !us.orders().state("L1") && !us.orders().state("L2"),
+          "D8 outbound: a limit order without Price (" + why1 + ") and an order without Side (" + why2 +
+              "): refused before leaving, not in the book");
+}
+
 void fixed_point() {
     check(detail::parse_fixed("72.53") == 7'253'000'000 && detail::parse_fixed("-0.5") == -50'000'000 &&
               detail::parse_fixed("100") == 100 * fixed_one && detail::parse_fixed("0.00000001") == 1,
@@ -145,6 +170,7 @@ int main() {
     invariants();
     throttle();
     stale();
+    outbound_checked();
     fixed_point();
     return test::result();
 }

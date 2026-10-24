@@ -66,7 +66,7 @@ checked; a case not shown says why.
 | 14b | yes | Required tag missing | pass | required tag missing (TestRequest without TestReqID): Reject 1; required tag missing (Reject without RefSeqNum): Reject 1 |
 | 14c | yes | Tag not defined for this message type | pass | tag defined but not for this message type (Symbol on Heartbeat): Reject 2 |
 | 14d | yes | Tag without a value | pass | tag without a value: Reject 4 |
-| 14e | yes | Value out of range or not enumerated | pass | value not one of the enumerated values (GapFillFlag X): Reject 5 |
+| 14e | yes | Value out of range or not enumerated | pass | value not one of the enumerated values (GapFillFlag X): Reject 5; TargetStrategy 1001 (its union datatype admits 1000 and up, EP311): accepted; 999: Reject 5 |
 | 14f | yes | Value in the wrong format | pass | value in the wrong format (BeginSeqNo abc): Reject 6 |
 | 14g | yes | Header, body, trailer out of order | pass | header tag after the body: Reject 14 |
 | 14h | yes | Tag not in a group repeated | pass | tag not in a group appears twice: Reject 13 |

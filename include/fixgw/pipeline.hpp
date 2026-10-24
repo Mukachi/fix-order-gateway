@@ -119,8 +119,9 @@ public:
     void on_durable(void (*f)(void*, std::size_t), void* ctx) noexcept { journal_.on_durable(f, ctx); }
     // Whether the session is logged on: safe from any thread.
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
-    // The application asked to log out, and the connection is gone (session stage).
-    bool finished() const noexcept { return logging_out_ && rfd_ < 0 && connecting_ < 0; }
+    // The application asked to log out, and the connection is gone: safe from
+    // any thread (the session stage publishes it).
+    bool finished() const noexcept { return finished_.load(std::memory_order_acquire); }
 
     // Runs the three stages until `stop`; this thread is the session stage.
     void run(const std::atomic<bool>& stop) {
@@ -136,9 +137,9 @@ public:
         });
         if (cpus_.session >= 0) lfipc::bench::detail::pin_to(cpus_.session);
         if (recovered_) us_.on_disconnected(clock_now());  // the old connection died with the old process
-        while (!stop.load(std::memory_order_relaxed) && !finished()) {
+        while (!stop.load(std::memory_order_relaxed) && !(logging_out_ && !logout_pending_ && rfd_ < 0 && connecting_ < 0)) {
             const session_time now = clock_now();
-            if (rfd_ < 0 && !logging_out_) connect(now);
+            if (rfd_ < 0 && !(logging_out_ && !logout_pending_)) connect(now);  // as the direct loop
             if (rfd_ >= 0) {
                 char buf[16 << 10];
                 ssize_t n;
@@ -148,9 +149,8 @@ public:
             }
             app_slot slot;
             while (in_.try_pop(slot)) {
-                if (slot.kind == app_slot::logout) {
-                    us_.logout("", now);
-                    logging_out_ = true;
+                if (slot.kind == app_slot::logout) {  // sent once logged on and caught up (below)
+                    logging_out_ = logout_pending_ = true;
                     continue;
                 }
                 const std::string_view body(slot.data, slot.length);
@@ -160,6 +160,10 @@ public:
                 }
             }
             us_.on_tick(now);
+            if (logout_pending_ && rfd_ >= 0 && us_.state().state() == session_state::active) {
+                us_.logout_when_synced(now);
+                logout_pending_ = false;
+            }
             const bool up = rfd_ >= 0 && us_.state().state() == session_state::active;
             if (up) backoff_.reset();
             connected_.store(up, std::memory_order_release);
@@ -169,6 +173,7 @@ public:
         done.store(true, std::memory_order_release);
         journal.join();
         sender.join();
+        finished_.store(logging_out_, std::memory_order_release);  // after the sender has written everything
     }
 
 private:
@@ -194,7 +199,7 @@ private:
             c.kind = kind;
             c.slot_kind = slot_kind;
             c.length = static_cast<std::uint16_t>(b.size() < sizeof(c.data) ? b.size() : sizeof(c.data));
-            std::memcpy(c.data, b.data(), c.length);
+            if (c.length) std::memcpy(c.data, b.data(), c.length);  // an empty view's data may be null (disconnect)
             b.remove_prefix(c.length);
             c.last = b.empty();
             while (!ring_->try_push(c)) {  // the sender is behind: wait for room
@@ -240,6 +245,8 @@ private:
         }
     }
     void lost(session_time now) {
+        // Our Logout unanswered when the connection went: as the direct loop.
+        if (logging_out_ && us_.state().logging_out()) logout_pending_ = true;
         control(stage_chunk::close, rfd_);  // after the old connection's last output
         rfd_ = -1;
         inbox_.clear();
@@ -325,8 +332,8 @@ private:
     int rfd_ = -1, connecting_ = -1;  // the session stage's: the socket it reads, and one being connected
     backoff backoff_;
     std::string inbox_;
-    std::atomic<bool> connected_{false};
-    bool recovered_ = false, logging_out_ = false;
+    std::atomic<bool> connected_{false}, finished_{false};
+    bool recovered_ = false, logging_out_ = false, logout_pending_ = false;
 };
 
 }  // namespace fixgw

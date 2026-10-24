@@ -372,6 +372,20 @@ void scenario_10_11() {
 
 void scenario_12_13() {
     {
+        // Note 007: the synced logout, TestRequest first, Logout on its Heartbeat.
+        logged_on f;
+        f.s.logout_when_synced(at(1));
+        const bool asked = type(f.last()) == "1" && field(f.last(), 112) == "LOGOUT-SYNC" && f.s.logging_out() &&
+                           f.s.state() == session_state::active;
+        f.feed(venue("0", 2, "112=OTHER|"), 2);
+        const bool not_yet = type(f.last()) == "1";
+        f.feed(venue("2", 3, "7=2|16=0|"), 2);  // their ResendRequest: our TestRequest gap-filled, so asked again
+        const bool again = type(f.last()) == "1" && field(f.last(), 112) == "LOGOUT-SYNC";
+        f.feed(venue("0", 4, "112=LOGOUT-SYNC|"), 3);
+        check(asked && not_yet && again && type(f.last()) == "5" && f.s.state() == session_state::logout_sent,
+              "note 007: synced logout: TestRequest first; asked again after serving a ResendRequest; Logout on its Heartbeat");
+    }
+    {
         logged_on f;
         f.s.logout("end of day", at(1));
         check(type(f.last()) == "5" && field(f.last(), 58) == "end of day" &&

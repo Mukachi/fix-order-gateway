@@ -207,6 +207,17 @@ public:
     }
     send_result send(std::string_view msg_type, std::string_view body, session_time t) {
         held_.at(t);
+        // note 007: an order-entry body checked as the venue will check it, so
+        // an order the venue must reject never leaves (found by fuzz_orders:
+        // otherwise it waits as PendingNew for a report that never comes)
+        if (has_dictionary(msg_type) && !detail::is_admin(msg_type)) {
+            decode_result r = validate_body(msg_type, body);
+            if (r.ok) r = conditional_rules_body(msg_type, body);
+            if (!r.ok) {
+                refusal_ = {false, 0, r.why};
+                return send_result::refused;
+            }
+        }
         refusal_ = book_.check(msg_type, body, t);  // note 007: D1 and the throttle, D4
         if (!refusal_.ok) return send_result::refused;
         const send_result r = session_.send(msg_type, body, t);
@@ -223,6 +234,14 @@ public:
         held_.at(t);
         session_.logout(why, t);
         commit(record_kind::logout, t, why);
+    }
+    // The synced logout (note 007), journaled as a logout record whose
+    // payload is the one byte synced_logout, so replay does the same.
+    static constexpr std::string_view synced_logout = "\x01";
+    void logout_when_synced(session_time t) {
+        held_.at(t);
+        session_.logout_when_synced(t);
+        commit(record_kind::logout, t, synced_logout);
     }
 
     // Recovery: every record of a cut journal fed back through the same
@@ -247,7 +266,10 @@ public:
                     if (ok) send(rec.payload.substr(1, tl), rec.payload.substr(1 + tl), rec.time);
                     break;
                 }
-                case record_kind::logout: logout(rec.payload, rec.time); break;
+                case record_kind::logout:
+                    if (rec.payload == synced_logout) logout_when_synced(rec.time);
+                    else logout(rec.payload, rec.time);
+                    break;
                 default: ok = false;
             }
             if (!ok) break;

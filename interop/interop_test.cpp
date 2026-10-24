@@ -12,11 +12,15 @@
 #include "../tests/fix_text.hpp"
 
 #include <fixgw/engine.hpp>
+#include <fixgw/pipeline.hpp>
 #include <fixgw/session.hpp>
 #include <fixgw/transport.hpp>
 
 #include <cstdio>
+#include <atomic>
 #include <filesystem>
+#include <memory>
+#include <thread>
 #include <fstream>
 #include <map>
 #include <set>
@@ -311,6 +315,80 @@ void our_acceptor(const std::string& initiator, const std::string& dictionary, c
               std::to_string(complaints) + ")");
 }
 
+// 3. Through the engine (note 007, S7): the pipeline, journaled, as initiator,
+// the application submitting limit orders through the ring and logging out
+// through it; QuickFIX's executor fills each. Its examples take no cancel or
+// replace at FIX 4.4 (executor answers them with BusinessMessageReject 3,
+// ordermatch every order-entry message), so those are not part of this.
+void through_engine(const std::string& executor, const std::string& dictionary, const std::string& dir) {
+    std::filesystem::create_directories(dir);
+    const std::uint16_t port = free_port();
+    const pid_t qf = spawn({executor, settings(dir, true, port, dictionary)}, dir + "/executor.out");
+    ::usleep(200'000);  // the executor listening
+    struct quiet {
+        void log(session_log, std::string_view, std::uint64_t) {}
+        bool resend(const message_view<>&) { return true; }
+        bool release(std::string_view, std::string_view) { return true; }
+    } q;
+    session_config cfg;
+    cfg.role = session_role::initiator;
+    cfg.sender_comp_id = "CLIENT";
+    cfg.target_comp_id = "VENUE";
+    journal_file f;
+    f.create(dir + "/engine.journal", 1, 8u << 20);
+    auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
+    engine_config ec;
+    ec.port = port;
+    order_config oc;
+    oc.max_orders = 4096;
+    oc.max_exec_ids = 1 << 14;
+    oc.id_bytes = 1 << 18;
+    pipeline_engine<quiet> e(cfg, ec, f, q, *in, *out, {}, oc);
+    std::atomic<bool> stop{false};
+    std::thread t([&] { e.run(stop); });
+    constexpr int n = 500;
+    int submitted = 0, filled = 0, inconsistent = 0, refused = 0, others = 0;
+    const std::int64_t give_up = clock_now().mono_ns + 30'000'000'000;
+    bool logout_sent = false;
+    while (!e.finished() && clock_now().mono_ns < give_up) {
+        if (e.connected() && submitted < n && submitted - filled < 32) {
+            char ts[utc_timestamp_length];
+            format_utc_timestamp(clock_now().utc_ms, ts);
+            if (submit_order(*in, "D", test::soh("11=E" + std::to_string(submitted) + "|21=1|55=VOD.L|54=1|60=" +
+                                                  std::string(ts, sizeof(ts)) + "|38=100|40=2|44=72.5|")))
+                ++submitted;
+        }
+        app_slot s;
+        while (out->try_pop(s)) {
+            if (s.kind == app_slot::order_state) {
+                const order_event ev = slot_event(s);
+                inconsistent += ev.inconsistent;
+                filled += ev.ord_status == ord_status::filled;
+            } else if (s.kind == app_slot::refused) {
+                ++refused;
+            } else if (s.kind == app_slot::message && std::string_view(s.data, s.length).find("\x01" "35=8\x01") == std::string_view::npos) {
+                ++others;  // anything but an ExecutionReport: a BusinessMessageReject, say
+            }
+        }
+        if (filled == n && !logout_sent) {
+            submit_logout(*in);
+            logout_sent = true;
+        }
+    }
+    const bool finished = e.finished();
+    stop = true;
+    t.join();
+    ::kill(qf, SIGTERM);
+    ::waitpid(qf, nullptr, 0);
+    const int complaints = quickfix_complaints(dir);
+    check(finished && filled == n && inconsistent == 0 && refused == 0 && others == 0 && complaints == 0,
+          "S7 (note 007) through the engine (pipeline, journaled) against QuickFIX's executor: " + std::to_string(filled) + " of " +
+              std::to_string(n) + " limit orders Filled in our order book, " + std::to_string(inconsistent) +
+              " inconsistent, no refusal, no message but ExecutionReports, logged out through the ring (" +
+              (finished ? "engine finished" : "engine not finished") + "); QuickFIX's log " + std::to_string(complaints) +
+              " complaints");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -324,6 +402,7 @@ int main(int argc, char** argv) {
     if (!d) return 2;
     our_initiator(argv[1], argv[3], std::string(d) + "/executor");
     our_acceptor(argv[2], argv[3], std::string(d) + "/initiator");
+    through_engine(argv[1], argv[3], std::string(d) + "/engine");
     if (!test::failures) std::filesystem::remove_all(d);
     else std::printf("kept for inspection: %s\n", d);
     return test::result();

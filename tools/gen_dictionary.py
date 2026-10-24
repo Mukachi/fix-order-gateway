@@ -40,7 +40,7 @@ KINDS = {
 def load(path, wanted):
     root = ET.parse(path).getroot()
     ns = {"f": root.tag.split("}")[0][1:]}
-    fields = {int(f.get("id")): [f.get("name"), f.get("type")] for f in root.iterfind(".//f:fields/f:field", ns)}
+    fields = {int(f.get("id")): [f.get("name"), f.get("type"), f.get("unionDataType")] for f in root.iterfind(".//f:fields/f:field", ns)}
     code_sets = {c.get("name"): (c.get("type"), [x.get("value") for x in c.iterfind("f:code", ns)])
                  for c in root.iterfind(".//f:codeSets/f:codeSet", ns)}
     components = {c.get("id"): c for c in root.iterfind(".//f:components/f:component", ns)}
@@ -90,7 +90,7 @@ def main():
             tag = r[0]
             if tag in STRING_OVERRIDES:
                 continue
-            if fields[tag] != s_fields[tag] or code_sets.get(fields[tag][1]) != s_code_sets.get(fields[tag][1]):
+            if fields[tag][:2] != s_fields[tag][:2] or code_sets.get(fields[tag][1]) != s_code_sets.get(fields[tag][1]):
                 raise SystemExit(f"tag {tag}: the two orchestrations disagree")
     for t, rows in flat.items():
         tags = [r[0] for r in rows]
@@ -175,15 +175,24 @@ def main():
     w("};")
     w("")
     w("// Each field the messages use, sorted by tag.")
+    w("// `union_from`: a code set whose union datatype (EP311) also admits any")
+    w("// integer from this value up (100, 1000, 4000: user-defined); `union_qty`:")
+    w("// one that also admits a quantity.")
     w("struct field_info {")
     w("    std::uint32_t tag;")
     w("    kind k;")
     w("    std::uint16_t codes_first, codes_count;")
+    w("    std::uint16_t union_from;")
+    w("    bool union_qty;")
     w("};")
     w(f"inline constexpr field_info fields[{len(used)}] = {{")
     for t in used:
         f, n = code_index.get(fields[t][1], (0, 0))
-        w(f"    {{{t}, kind::{kind(t)}, {f}, {n}}},  // {fields[t][0]}")
+        union = fields[t][2] or ""
+        known = {"": 0, "Reserved100Plus": 100, "Reserved1000Plus": 1000, "Reserved4000Plus": 4000, "Qty": 0}
+        if union not in known:
+            raise SystemExit(f"tag {t}: union datatype {union} not handled")
+        w(f"    {{{t}, kind::{kind(t)}, {f}, {n}, {known[union]}, {'true' if union == 'Qty' else 'false'}}},  // {fields[t][0]}")
     w("};")
     w("")
     w("// A message's tags, sorted by tag: `parent` is the index within the same")
