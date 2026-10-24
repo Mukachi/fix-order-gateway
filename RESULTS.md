@@ -26,10 +26,10 @@ Per call, timed between `start()` and `stop()` and not subtracted: the first row
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | empty window: start(); stop() | - | - | – | one | 0.00 | 200 | 0 | 16 | 17 | 17 | 111–119 |
 | frame | NewOrderSingle | scalar | 173 | one | 1.00 | 200 | 0 | 137–138 | 178–179 | 258–272 | 1,594–1,831 |
-| frame | NewOrderSingle | SIMD | 173 | one | 1.52–1.54 | 200 | 0 | 68–70 | 97–99 | 258–270 | 1,655–17.4 µs |
+| frame | NewOrderSingle | SIMD | 173 | one | 1.52–1.54 | 200 | 0 | 68–70 | 97–99 | 258–270 | 1.7–17.4 µs |
 | frame and decode | NewOrderSingle | A | 173 | fast | 13.05–13.94 | 15–131 | 2–4 | 987–1,008 | 1,212–1,242 | 1,301–1,329 | 2,255–2,866 |
 | frame and decode | NewOrderSingle | A | 173 | slow | 42.68–42.72 | 65–182 | 2–4 | 1,210–1,216 | 1,459–1,467 | 1,548–1,559 | 2,624–2,900 |
-| frame and decode | NewOrderSingle | scalar | 173 | fast | 6.87–6.91 | 92–119 | 2–7 | 365–373 | 461–481 | 641–650 | 1,859–17.6 µs |
+| frame and decode | NewOrderSingle | scalar | 173 | fast | 6.87–6.91 | 92–119 | 2–7 | 365–373 | 461–481 | 641–650 | 1.9–17.6 µs |
 | frame and decode | NewOrderSingle | scalar | 173 | slow | 24.41–24.84 | 75–106 | 2–7 | 499–501 | 601–609 | 756–757 | 1,729–1,987 |
 | frame and decode | NewOrderSingle | SIMD | 173 | fast | 4.17 | 17–147 | 1–6 | 280–281 | 402 | 624–625 | 1,548–2,071 |
 | frame and decode | NewOrderSingle | SIMD | 173 | slow | 16.32–16.80 | 49–182 | 1–6 | 365–368 | 451–454 | 695–697 | 1,826–2,204 |
@@ -41,17 +41,17 @@ Per call, timed between `start()` and `stop()` and not subtracted: the first row
 | frame | ExecutionReport | SIMD | 250 | one | 1.50–1.51 | 200 | 0 | 72–74 | 104–106 | 256–280 | 1,540–1,564 |
 | frame and decode | ExecutionReport | A | 250 | fast | 35.09–36.97 | 25–133 | 2 | 1,701–1,721 | 2,031–2,046 | 2,150–2,164 | 3,133–3,454 |
 | frame and decode | ExecutionReport | A | 250 | slow | 68.20–72.39 | 65–173 | 2 | 1,969–2,000 | 2,270–2,299 | 2,363–2,396 | 3,530–3,803 |
-| frame and decode | ExecutionReport | scalar | 250 | fast | 15.08–15.18 | 55–136 | 3–8 | 532–545 | 642–665 | 772–777 | 2,187–18.1 µs |
+| frame and decode | ExecutionReport | scalar | 250 | fast | 15.08–15.18 | 55–136 | 3–8 | 532–545 | 642–665 | 772–777 | 2.2–18.1 µs |
 | frame and decode | ExecutionReport | scalar | 250 | slow | 38.22–39.90 | 58–142 | 3–8 | 718–723 | 834–839 | 922–929 | 1,911–2,239 |
 | frame and decode | ExecutionReport | SIMD | 250 | fast | 2.40–2.44 | 30–167 | 2–9 | 342–343 | 427–439 | 679–682 | 1,833–2,084 |
 | frame and decode | ExecutionReport | SIMD | 250 | slow | 16.35–17.32 | 29–168 | 2–9 | 443–446 | 602–619 | 792–795 | 1,944–2,040 |
 | frame and decode | ExecutionReport | SIMD, padded | 250 | fast | 2.17–2.23 | 62–162 | 4–8 | 316–320 | 401–440 | 653–672 | 1,766–1,841 |
 | frame and decode | ExecutionReport | SIMD, padded | 250 | slow | 11.97–12.47 | 30–131 | 4–8 | 386–388 | 491–499 | 731–736 | 1,655–2,043 |
-| frame and decode | ExecutionReport | two-stage | 250 | fast | 4.76–4.82 | 67–119 | 4–7 | 384–385 | 467–474 | 724–730 | 1,641–17.2 µs |
+| frame and decode | ExecutionReport | two-stage | 250 | fast | 4.76–4.82 | 67–119 | 4–7 | 384–385 | 467–474 | 724–730 | 1.6–17.2 µs |
 | frame and decode | ExecutionReport | two-stage | 250 | slow | 19.26–20.59 | 76–129 | 4–7 | 487–493 | 574–584 | 815–821 | 1,997–2,291 |
 | frame | Heartbeat | scalar | 92 | one | 1.00–1.27 | 199–200 | 0–1 | withheld (note 009) | – | – | – |
 | frame | Heartbeat | SIMD | 92 | one | 0.55 | 200 | 0 | 54 | 79 | 217 | 1,509–5,005 |
-| frame and decode | Heartbeat | A | 92 | fast | 1.85–2.04 | 34–48 | 3–6 | 447–449 | 543–562 | 685–746 | 1,769–18.6 µs |
+| frame and decode | Heartbeat | A | 92 | fast | 1.85–2.04 | 34–48 | 3–6 | 447–449 | 543–562 | 685–746 | 1.8–18.6 µs |
 | frame and decode | Heartbeat | A | 92 | slow | 6.24–6.38 | 149–160 | 3–6 | 449–451 | 675–682 | 812–814 | 1,879–2,085 |
 | frame and decode | Heartbeat | scalar | 92 | fast | 1.40–1.41 | 34–73 | 5–9 | 186–188 | 261–278 | 496–498 | 1,653–1,891 |
 | frame and decode | Heartbeat | scalar | 92 | slow | 6.02–7.25 | 118–161 | 5–9 | 233–237 | 319 | 541–544 | 1,746–1,988 |
@@ -127,24 +127,24 @@ Application to application, open loop: limit NewOrderSingles submitted on a fixe
 
 | Configuration | Survives | Offered /s | p50 | p99 | p99.9 | max | Venue p50 |
 |---|---|---|---|---|---|---|---|
-| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.5 µs–118.2 µs | 125.8 µs–131.8 µs | 177.0 µs–186.6 µs | 1,983.4 µs–2,015.9 µs | 9,345–11.9 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.3 µs–142.3 µs | 193.4 µs–316.0 µs | 211.6 µs–8,409.9 µs | 1,873.3 µs–18,079.1 µs | 9,113–11.5 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 20,000 | 151.1 µs–155.1 µs | 180.2 µs–326.5 µs | 199.9 µs–1,000.6 µs | 1,163.7 µs–2,288.9 µs | 9,061–11.5 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 50,000 | 160.6 µs–169.3 µs | 196.1 µs–205.1 µs | 225.4 µs–1,790.2 µs | 889.8 µs–2,531.4 µs | 9,338–11.9 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.5 µs–118.2 µs | 125.8 µs–131.8 µs | 177.0 µs–186.6 µs | 1,983.4 µs–2,015.9 µs | 9.3–11.9 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.3 µs–142.3 µs | 193.4 µs–316.0 µs | 211.6 µs–8,409.9 µs | 1,873.3 µs–18,079.1 µs | 9.1–11.5 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 20,000 | 151.1 µs–155.1 µs | 180.2 µs–326.5 µs | 199.9 µs–1,000.6 µs | 1,163.7 µs–2,288.9 µs | 9.1–11.5 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 50,000 | 160.6 µs–169.3 µs | 196.1 µs–205.1 µs | 225.4 µs–1,790.2 µs | 889.8 µs–2,531.4 µs | 9.3–11.9 µs |
 | ours, pipeline, journal A, busy-poll | power loss | 100,000 | not sustained | not sustained | not sustained | not sustained | 44.0 µs–4,773.9 µs |
-| ours, direct, journal A, block | power loss | 1,000 | 215.0 µs–217.7 µs | 230.3 µs–232.1 µs | 272.3 µs–306.4 µs | 2,046.0 µs–2,264.4 µs | 9,695–12.1 µs |
-| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | not sustained | not sustained | 8,698–11.5 µs |
-| ours, direct, journal A, block | power loss | 20,000 | not sustained | not sustained | not sustained | not sustained | 8,996–12.0 µs |
-| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.9 µs–22.1 µs | 27.0 µs–32.2 µs | 37.9 µs–40.6 µs | 694.4 µs–727.6 µs | 9,275–11.6 µs |
-| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–20.9 µs | 22.7 µs–25.7 µs | 25.6 µs–28.9 µs | 65.4 µs–81.2 µs | 8,849–11.2 µs |
-| ours, direct, journal C, busy-poll | process crash | 20,000 | 18.6 µs–20.9 µs | 22.8 µs–25.6 µs | 26.0 µs–29.1 µs | 68.5 µs–74.3 µs | 9,030–11.2 µs |
-| ours, direct, journal C, busy-poll | process crash | 50,000 | 18.7 µs–21.9 µs | 23.7 µs–32.3 µs | 38.5 µs–51.9 µs | 83.9 µs–102.8 µs | 8,939–11.2 µs |
-| ours, direct, journal C, busy-poll | process crash | 100,000 | not sustained | not sustained | not sustained | not sustained | 9,040–4,669.4 µs |
-| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 127.8 µs–129.9 µs | 224.4 µs–694.6 µs | 9,255–10.2 µs |
+| ours, direct, journal A, block | power loss | 1,000 | 215.0 µs–217.7 µs | 230.3 µs–232.1 µs | 272.3 µs–306.4 µs | 2,046.0 µs–2,264.4 µs | 9.7–12.1 µs |
+| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | not sustained | not sustained | 8.7–11.5 µs |
+| ours, direct, journal A, block | power loss | 20,000 | not sustained | not sustained | not sustained | not sustained | 9.0–12.0 µs |
+| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.9 µs–22.1 µs | 27.0 µs–32.2 µs | 37.9 µs–40.6 µs | 694.4 µs–727.6 µs | 9.3–11.6 µs |
+| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–20.9 µs | 22.7 µs–25.7 µs | 25.6 µs–28.9 µs | 65.4 µs–81.2 µs | 8.8–11.2 µs |
+| ours, direct, journal C, busy-poll | process crash | 20,000 | 18.6 µs–20.9 µs | 22.8 µs–25.6 µs | 26.0 µs–29.1 µs | 68.5 µs–74.3 µs | 9.0–11.2 µs |
+| ours, direct, journal C, busy-poll | process crash | 50,000 | 18.7 µs–21.9 µs | 23.7 µs–32.3 µs | 38.5 µs–51.9 µs | 83.9 µs–102.8 µs | 8.9–11.2 µs |
+| ours, direct, journal C, busy-poll | process crash | 100,000 | not sustained | not sustained | not sustained | not sustained | 9.0–4,669.4 µs |
+| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 127.8 µs–129.9 µs | 224.4 µs–694.6 µs | 9.3–10.2 µs |
 | QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 58.9 µs–61.5 µs | 157.0 µs–174.9 µs | 9,213–9,814 |
 | QuickFIX 1.16.0, file store | process crash | 20,000 | 47.4 µs–53.0 µs | 82.1 µs–88.5 µs | 87.5 µs–90.3 µs | 97.9 µs–192.0 µs | 9,253–9,823 |
 | QuickFIX 1.16.0, file store | process crash | 50,000 | not sustained | not sustained | not sustained | not sustained | 8,951–9,345 |
-| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 108.8 µs–110.9 µs | 129.5 µs–132.5 µs | 9,203–10.1 µs |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 108.8 µs–110.9 µs | 129.5 µs–132.5 µs | 9.2–10.1 µs |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 31.2 µs–31.7 µs | 37.6 µs–39.1 µs | 40.4 µs–42.3 µs | 45.6 µs–48.1 µs | 9,355–9,918 |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 20,000 | 31.1 µs–32.2 µs | 35.3 µs–36.2 µs | 38.0 µs–38.9 µs | 41.5 µs–58.0 µs | 9,115–9,848 |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 50,000 | 44.4 µs–53.5 µs | 76.9 µs–109.0 µs | 91.3 µs–135.3 µs | 118.0 µs–174.8 µs | 8,758–9,298 |

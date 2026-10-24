@@ -28,7 +28,7 @@ enable_testing()
 # pinned commit into build/_deps. Headers only: SOURCE_SUBDIR names no
 # directory, so its own tests, benchmarks and baselines are not built here.
 include(FetchContent)
-set(FIXGW_LFIPC_COMMIT 1a42550fae76b10ce41094017c8184914e3a9f04)
+set(FIXGW_LFIPC_COMMIT c733131c95198f08cc9032b7ae105cfaf6f7cd88)
 FetchContent_Declare(lockfree_ipc
   GIT_REPOSITORY https://github.com/Mukachi/lockfree-ipc.git
   GIT_TAG ${FIXGW_LFIPC_COMMIT}

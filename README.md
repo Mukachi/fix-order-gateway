@@ -18,7 +18,7 @@ Interoperability with QuickFIX v1.16.0, both roles, across a dropped connection:
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | frame and decode | NewOrderSingle | A | 173 | fast | 13.05–13.94 | 15–131 | 2–4 | 987–1,008 | 1,212–1,242 | 1,301–1,329 | 2,255–2,866 |
 | frame and decode | NewOrderSingle | A | 173 | slow | 42.68–42.72 | 65–182 | 2–4 | 1,210–1,216 | 1,459–1,467 | 1,548–1,559 | 2,624–2,900 |
-| frame and decode | NewOrderSingle | scalar | 173 | fast | 6.87–6.91 | 92–119 | 2–7 | 365–373 | 461–481 | 641–650 | 1,859–17.6 µs |
+| frame and decode | NewOrderSingle | scalar | 173 | fast | 6.87–6.91 | 92–119 | 2–7 | 365–373 | 461–481 | 641–650 | 1.9–17.6 µs |
 | frame and decode | NewOrderSingle | scalar | 173 | slow | 24.41–24.84 | 75–106 | 2–7 | 499–501 | 601–609 | 756–757 | 1,729–1,987 |
 | frame and decode | NewOrderSingle | SIMD | 173 | fast | 4.17 | 17–147 | 1–6 | 280–281 | 402 | 624–625 | 1,548–2,071 |
 | frame and decode | NewOrderSingle | SIMD | 173 | slow | 16.32–16.80 | 49–182 | 1–6 | 365–368 | 451–454 | 695–697 | 1,826–2,204 |
@@ -67,15 +67,15 @@ Against QuickFIX, order to ExecutionReport ([note 008](docs/design/008-measureme
 <!-- results:order-summary -->
 | Configuration | Survives | Offered /s | p50 | p99 | Venue p50 |
 |---|---|---|---|---|---|
-| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.5 µs–118.2 µs | 125.8 µs–131.8 µs | 9,345–11.9 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.3 µs–142.3 µs | 193.4 µs–316.0 µs | 9,113–11.5 µs |
-| ours, direct, journal A, block | power loss | 1,000 | 215.0 µs–217.7 µs | 230.3 µs–232.1 µs | 9,695–12.1 µs |
-| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | 8,698–11.5 µs |
-| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.9 µs–22.1 µs | 27.0 µs–32.2 µs | 9,275–11.6 µs |
-| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–20.9 µs | 22.7 µs–25.7 µs | 8,849–11.2 µs |
-| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 9,255–10.2 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.5 µs–118.2 µs | 125.8 µs–131.8 µs | 9.3–11.9 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.3 µs–142.3 µs | 193.4 µs–316.0 µs | 9.1–11.5 µs |
+| ours, direct, journal A, block | power loss | 1,000 | 215.0 µs–217.7 µs | 230.3 µs–232.1 µs | 9.7–12.1 µs |
+| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | 8.7–11.5 µs |
+| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.9 µs–22.1 µs | 27.0 µs–32.2 µs | 9.3–11.6 µs |
+| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–20.9 µs | 22.7 µs–25.7 µs | 8.8–11.2 µs |
+| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 9.3–10.2 µs |
 | QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 9,213–9,814 |
-| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 9,203–10.1 µs |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 9.2–10.1 µs |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 31.2 µs–31.7 µs | 37.6 µs–39.1 µs | 9,355–9,918 |
 
 Order to ExecutionReport, application to application, open loop, ns, range over the runs. Highest rate sustained: ours, pipeline, journal A, busy-poll 50,000/s; ours, direct, journal A, block 1,000/s; ours, direct, journal C, busy-poll 50,000/s; QuickFIX 1.16.0, file store 20,000/s; QuickFIX 1.16.0, PersistMessages=N 50,000/s. The guarantees, the method and every rate: [RESULTS.md](RESULTS.md).
