@@ -67,18 +67,18 @@ Against QuickFIX, order to ExecutionReport ([note 008](docs/design/008-measureme
 <!-- results:order-summary -->
 | Configuration | Survives | Offered /s | p50 | p99 | Venue p50 |
 |---|---|---|---|---|---|
-| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.5 µs–118.2 µs | 125.8 µs–131.8 µs | 9.3–11.9 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.3 µs–142.3 µs | 193.4 µs–316.0 µs | 9.1–11.5 µs |
-| ours, direct, journal A, block | power loss | 1,000 | 215.0 µs–217.7 µs | 230.3 µs–232.1 µs | 9.7–12.1 µs |
-| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | 8.7–11.5 µs |
-| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.9 µs–22.1 µs | 27.0 µs–32.2 µs | 9.3–11.6 µs |
-| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–20.9 µs | 22.7 µs–25.7 µs | 8.8–11.2 µs |
-| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 9.3–10.2 µs |
-| QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 9,213–9,814 |
-| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 9.2–10.1 µs |
-| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 31.2 µs–31.7 µs | 37.6 µs–39.1 µs | 9,355–9,918 |
+| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.8 µs–116.1 µs | 126.0 µs–129.7 µs | 9,511–9,869 |
+| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.2 µs–141.0 µs | 193.4 µs–194.0 µs | 9,204–9,613 |
+| ours, direct, journal A, block | power loss | 1,000 | 214.4 µs–216.5 µs | 230.3 µs–231.2 µs | 9.8–10.3 µs |
+| ours, direct, journal A, block | power loss | 10,000 | 253.3 µs–254.1 µs | 353.7 µs–355.3 µs | 9,119–9,660 |
+| ours, direct, journal C, busy-poll | process crash | 1,000 | 20.0 µs–20.9 µs | 28.4 µs–30.3 µs | 9,321–9,879 |
+| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.9 µs–19.6 µs | 23.1 µs–23.8 µs | 8,952–9,562 |
+| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.8 µs–107.6 µs | 114.4 µs–119.0 µs | 9.6–12.2 µs |
+| QuickFIX 1.16.0, file store | process crash | 10,000 | 47.1 µs–50.4 µs | 55.7 µs–59.9 µs | 9.4–12.0 µs |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–93.9 µs | 95.9 µs–99.9 µs | 9.5–12.2 µs |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 32.2 µs–34.8 µs | 37.9 µs–41.3 µs | 9.3–12.1 µs |
 
-Order to ExecutionReport, application to application, open loop, ns, range over the runs. Highest rate sustained: ours, pipeline, journal A, busy-poll 50,000/s; ours, direct, journal A, block 1,000/s; ours, direct, journal C, busy-poll 50,000/s; QuickFIX 1.16.0, file store 20,000/s; QuickFIX 1.16.0, PersistMessages=N 50,000/s. The guarantees, the method and every rate: [RESULTS.md](RESULTS.md).
+Order to ExecutionReport, application to application, open loop, ns, range over the runs. Highest rate sustained: ours, pipeline, journal A, busy-poll ≥ 100,000/s; ours, direct, journal A, block 10,000/s; ours, direct, journal C, busy-poll ≥ 100,000/s; QuickFIX 1.16.0, file store 20,000/s; QuickFIX 1.16.0, PersistMessages=N 50,000/s. The guarantees, the method and every rate: [RESULTS.md](RESULTS.md).
 <!-- /results -->
 
 The gateway's own cost per message, by stage:

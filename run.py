@@ -367,13 +367,14 @@ def config_name(key):
 def order_rows(lf, sets, rates=None, figures=("p50_ns", "p99_ns", "p999_ns", "max_ns")):
     """Rows for every configuration and rate measured in every run of its set; a
     rate not sustained in every run says so instead of giving a latency (S5)."""
-    rows, highest, partial = [], {}, []
+    rows, highest, partial, top = [], {}, [], {}
     for name in ("order", "order_qf"):
         if name not in sets:
             continue
         runs = sets[name][1]
         for key, ps in order_points(runs, name).items():
             cfg = key[:4]
+            top[cfg] = max(top.get(cfg, 0), key[4])
             if len(ps) < len(runs):
                 partial.append(f"{config_name(key)} at {key[4]:,.0f}/s")
                 continue
@@ -385,6 +386,8 @@ def order_rows(lf, sets, rates=None, figures=("p50_ns", "p99_ns", "p999_ns", "ma
             cells = [lf.rng([p[f] for p in ps]) for f in figures] if ok else ["not sustained"] * len(figures)
             venue = lf.rng([p["venue_p50_ns"] for p in ps]) if all(p["venue_read"] for p in ps) else "-"
             rows.append([config_name(key), ps[0]["survives"], f"{key[4]:,.0f}"] + cells + [venue])
+    # Sustained at the highest rate offered: a lower bound, not a ceiling.
+    highest = {k: (f"≥ {v:,.0f}/s" if v == top[k] else f"{v:,.0f}/s") for k, v in highest.items()}
     return rows, highest, partial
 
 
@@ -392,7 +395,7 @@ def order_section(lf, sets):
     rows, highest, partial = order_rows(lf, sets)
     notes = [sets[n][0] for n in ("order", "order_qf") if n in sets]
     counts = "; ".join(f"{n}: {len(sets[n][1])} runs" for n in ("order", "order_qf") if n in sets)
-    peak = "; ".join(f"{config_name(k + (0,))}: {v:,.0f}/s" for k, v in highest.items())
+    peak = "; ".join(f"{config_name(k + (0,))}: {v}" for k, v in highest.items())
     out = [f"## Order to ExecutionReport (note {notes[0]})", "",
            "Application to application, open loop: limit NewOrderSingles submitted on a fixed schedule, latency from each "
            "order's scheduled time to its ExecutionReport (New) reaching the application; 100,000 orders a point after 5,000 "
@@ -485,7 +488,7 @@ def readme_blocks(lf, sets, withheld):
         blocks["net-summary"] = "Transport figures: not yet measured (design note 005).\n"
     if "order" in sets or "order_qf" in sets:
         rows, highest, _ = order_rows(lf, sets, rates=(1000.0, 10000.0), figures=("p50_ns", "p99_ns"))
-        peak = "; ".join(f"{config_name(k + (0,))} {v:,.0f}/s" for k, v in highest.items())
+        peak = "; ".join(f"{config_name(k + (0,))} {v}" for k, v in highest.items())
         blocks["order-summary"] = (lf.table(["Configuration", "Survives", "Offered /s", "p50", "p99", "Venue p50"], rows)
                                    + f"\n\nOrder to ExecutionReport, application to application, open loop, ns, range over the "
                                    f"runs. Highest rate sustained: {peak}. The guarantees, the method and every rate: "
