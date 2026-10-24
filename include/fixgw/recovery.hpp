@@ -26,6 +26,7 @@
 #include <fixgw/orders.hpp>
 #include <fixgw/session.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -165,7 +166,7 @@ template <class Strategy, class Out, class Policy>
 class journaled_session {
 public:
     journaled_session(const session_config& cfg, Strategy& journal, Out& out, Policy& policy, const order_config& orders = {})
-        : journal_(journal), out_(out), held_(policy), session_(cfg, held_, store_), book_(orders) {
+        : journal_(journal), out_(out), held_(policy), session_(cfg, held_, store_), book_(orders), slice_(cfg.max_frame) {
         held_.attach(&book_);
     }
 
@@ -193,10 +194,20 @@ public:
         session_.on_disconnected(t);
         commit(record_kind::disconnected, t);
     }
+    // Taken a slice of at most max_frame bytes at a time (it holds the largest
+    // message), a record each: a backlog read at once (note 008's amendment:
+    // over 1 MB behind a slow journal) is otherwise one record past the
+    // journal's max_payload, and a failed write ends the session.
     std::size_t on_bytes(const char* p, std::size_t n, session_time t) {
-        held_.at(t);
-        const std::size_t used = session_.on_bytes(p, n, t);
-        if (used > 0) commit(record_kind::bytes, t, std::string_view(p, used));  // exactly what was consumed
+        std::size_t used = 0;
+        while (used < n) {
+            held_.at(t);
+            const std::size_t k = session_.on_bytes(p + used, std::min(n - used, slice_), t);
+            if (k == 0) break;
+            commit(record_kind::bytes, t, std::string_view(p + used, k));  // exactly what was consumed
+            used += k;
+            if (failed_) break;  // nothing more taken once the journal has failed
+        }
         return used;
     }
     void on_tick(session_time t) {  // D2: journaled only if it did something
@@ -329,6 +340,7 @@ private:
     session<held_sink<Policy>, memory_store> session_;
     order_book book_;
     order_book::verdict refusal_{true, 0, nullptr};
+    std::size_t slice_;
     bool replaying_ = false, failed_ = false, pending_ = false;
 };
 

@@ -1,7 +1,8 @@
 // Tests for include/fixgw/recovery.hpp. Spec: docs/design/004-store.md (S2,
 // and D1-D3): a journaled session, recovered from its journal, equals the one
 // that ran; outputs wait for the journal; only ticks that did something are
-// journaled.
+// journaled. Note 008's amendment: a backlog read at once is journaled in
+// slices of at most max_frame bytes.
 #include "fix_text.hpp"
 #include "peer.hpp"
 
@@ -115,6 +116,51 @@ void recovery(const std::string& dir) {
           "D1: the journal fails: the order is not sent, the connection is closed");
 }
 
+// Note 008's amendment: over 2 MB of reports handed to the session in one
+// call (a backlog read at once behind a slow journal) is taken whole, as
+// records of at most max_frame bytes (the journal's max_payload is 1 MB), and
+// replays to the same state.
+void backlog(const std::string& dir) {
+    const std::string path = dir + "/backlog.journal";
+    file_journal j;
+    j.f.create(path, 1);
+    wire w;
+    policy p;
+    peer_link l;
+    ours_t us(ours(), j, w, p);
+    l.peer.on_connected(at(0));
+    us.on_connected(at(0));
+    l.pump(us, w, 0, 1 << 16);
+    constexpr int n = 15'000;
+    for (int i = 0; i < n; ++i) us.send("D", test::soh(test::order_fields("B" + std::to_string(i))), at(1));
+    l.pump(us, w, 1, 1 << 16);
+    for (int i = 0; i < n; ++i) l.peer.send("8", test::soh(test::report_fields("B" + std::to_string(i), "X" + std::to_string(i))), at(2));
+    const std::string all = l.ps.sent;
+    l.ps.sent.clear();
+    const std::size_t used = us.on_bytes(all.data(), all.size(), at(2));
+    check(all.size() > (2u << 20) && used == all.size() && !us.failed() && w.delivered.size() == static_cast<std::size_t>(n),
+          "a backlog over 2 MB in one call: taken whole, every report delivered, the journal has not failed");
+    j.f.close();
+
+    journal_reader r;
+    std::size_t largest = 0, bytes_records = 0;
+    const bool read = r.open(path);
+    for (const auto& x : r.records())
+        if (x.kind == record_kind::bytes) {
+            largest = std::max(largest, x.payload.size());
+            ++bytes_records;
+        }
+    check(read && !r.torn() && largest <= ours().max_frame && bytes_records > (2u << 20) / ours().max_frame,
+          "journaled as records of at most max_frame bytes");
+    file_journal j2;
+    j2.f.open_append(path, r.valid_end());
+    wire w2;
+    ours_t again(ours(), j2, w2, p);
+    check(again.recover(r) && again.state().next_expected() == us.state().next_expected() &&
+              again.orders().exec_ids() == us.orders().exec_ids() && w2.delivered == w.delivered,
+          "replayed: the same numbers, the same reports, the same ExecIDs in the book");
+}
+
 }  // namespace
 
 int main() {
@@ -125,6 +171,7 @@ int main() {
         return test::result();
     }
     recovery(d);
+    backlog(d);
     std::filesystem::remove_all(d);
     return test::result();
 }
