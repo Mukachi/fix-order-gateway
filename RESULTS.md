@@ -11,6 +11,9 @@ HP ProLiant DL380 Gen9, BIOS P89 (08/29/2024); 2 × Intel(R) Xeon(R) CPU E5-2699
 | codec (note 009) | 3 | 2026-10-22 19:20 UTC | 1f21799 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | store (note 004) | 3 | 2026-10-23 00:33 UTC | 8e844c5 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | net (note 005) | 9 | 2026-10-23 19:02 UTC | 2f1697d | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| order_qf (note 008) | 3 | 2026-10-24 17:11 UTC | 92817c9 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| stage (note 008) | 3 | 2026-10-24 17:25 UTC | 92817c9 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| stage_qf (note 008) | 3 | 2026-10-24 17:25 UTC | 92817c9 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 
 Every run met note 004's bench-mode conditions (each file's `environment.bench_mode`, checked before use) and was built clean; compiler and flags are in each file's `environment.build`. Ranges are min–max over a set's runs.
 
@@ -116,3 +119,40 @@ Round trip: a 200-byte message out over TCP and back from net_peer (busy-polling
 | order path, pipeline, 1,000/s | 106.3 µs–106.8 µs | 113.7 µs–114.1 µs | 135.8 µs–139.8 µs | 144.4 µs–148.4 µs | 132.0 µs–133.5 µs | 140.3 µs–142.0 µs |
 | order path, direct, 10,000/s | 237.1 µs–238.3 µs | 325.5 µs–329.8 µs | 234.5 µs–237.6 µs | 321.1 µs–324.0 µs | 235.1 µs–235.4 µs | 322.2 µs–323.3 µs |
 | order path, pipeline, 10,000/s | 98.7 µs–99.2 µs | 109.4 µs–111.8 µs | 145.6 µs–183.6 µs | 191.6 µs–192.6 µs | 147.5 µs–147.7 µs | 192.2 µs–194.0 µs |
+
+## Order to ExecutionReport (note 008)
+
+Application to application, open loop: limit NewOrderSingles submitted on a fixed schedule, latency from each order's scheduled time to its ExecutionReport (New) reaching the application; 100,000 orders a point after 5,000 of warm-up; over loopback to order_venue (our venue simulator behind an acceptor session, its own process, busy-polling on its own core), the same venue for both gateways. Ours: the application on CPU 2, the engine on 4 (the pipeline's journal and sender stages on 6 and 8). QuickFIX: a program written to its documented API, the application thread on CPU 2 and its other threads confined to as many reserved CPUs as there are. 'Survives' is the configuration's guarantee: QuickFIX's file store never syncs (counted: 0 fsync and 0 fdatasync calls), so it survives a process crash like our journal C; our journal A makes each input durable with fdatasync first and survives power loss, which QuickFIX documents no setting for. 'Venue p50' is the venue's own turnaround, read to written. order_qf: 3 runs.
+
+| Configuration | Survives | Offered /s | p50 | p99 | p99.9 | max | Venue p50 |
+|---|---|---|---|---|---|---|---|
+| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 127.8 µs–129.9 µs | 224.4 µs–694.6 µs | 9,255–10.2 µs |
+| QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 58.9 µs–61.5 µs | 157.0 µs–174.9 µs | 9,213–9,814 |
+| QuickFIX 1.16.0, file store | process crash | 20,000 | 47.4 µs–53.0 µs | 82.1 µs–88.5 µs | 87.5 µs–90.3 µs | 97.9 µs–192.0 µs | 9,253–9,823 |
+| QuickFIX 1.16.0, file store | process crash | 50,000 | not sustained | not sustained | not sustained | not sustained | 8,951–9,345 |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 108.8 µs–110.9 µs | 129.5 µs–132.5 µs | 9,203–10.1 µs |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 31.2 µs–31.7 µs | 37.6 µs–39.1 µs | 40.4 µs–42.3 µs | 45.6 µs–48.1 µs | 9,355–9,918 |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 20,000 | 31.1 µs–32.2 µs | 35.3 µs–36.2 µs | 38.0 µs–38.9 µs | 41.5 µs–58.0 µs | 9,115–9,848 |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 50,000 | 44.4 µs–53.5 µs | 76.9 µs–109.0 µs | 91.3 µs–135.3 µs | 118.0 µs–174.8 µs | 8,758–9,298 |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 100,000 | not sustained | not sustained | not sustained | not sustained | 8,669–9,229 |
+
+Highest rate sustained in every run: QuickFIX 1.16.0, file store: 20,000/s; QuickFIX 1.16.0, PersistMessages=N: 50,000/s.
+
+## The gateway's cost per message, by stage (note 008)
+
+In process, no network: each call timed between start() and stop() on CPU 2, unsubtracted, beside an empty window ('none') for the clock's own cost; 100,000 different messages after 10,000 of warm-up, visited in order (sequence numbers and ExecIDs advance), the same bytes for both (bench/stage_inputs.hpp). What a stage needs but does not own (decoding, before a check that reads a decoded message) is done outside its window. QuickFIX's reference: a FIX::Message constructed from the same bytes with its FIX 4.4 dictionary validating. stage: 3 runs; stage_qf: 3 runs.
+
+| Gateway | Message | Stage | p50 | p99 | p99.9 |
+|---|---|---|---|---|---|
+| ours | - | none | 16 | 17 | 17 |
+| ours | ExecutionReport in | framing and decoding | 305–306 | 410–423 | 618–654 |
+| ours | ExecutionReport in | dictionary check (note 006) | 786–1,316 | 815–1,403 | 820–1,431 |
+| ours | ExecutionReport in | order book (note 007) | 299–305 | 680–706 | 916–977 |
+| ours | ExecutionReport in | session, the whole inbound path | 1,273–1,279 | 1,374–1,474 | 1,558–2,001 |
+| ours | ExecutionReport in | journaled session (book, journal C), inbound | 1,830–1,899 | 2,446–2,466 | 3,346–3,456 |
+| ours | NewOrderSingle out | body checks (note 007) | 1,238–1,315 | 1,382–1,522 | 1,575–1,718 |
+| ours | NewOrderSingle out | order book check and record (note 007) | 322–323 | 852–862 | 1,085–1,099 |
+| ours | NewOrderSingle out | session send (encode, store) | 153–155 | 213–215 | 284–311 |
+| ours | NewOrderSingle out | journaled session send (checks, book, encode, journal C) | 1,855–1,870 | 4,097–4,181 | 6,600–6,744 |
+| QuickFIX 1.16.0 | - | none | 16 | 17 | 17 |
+| QuickFIX 1.16.0 | ExecutionReport in | FIX::Message from the bytes, the FIX 4.4 dictionary validating | 2,057–2,060 | 2,135–2,163 | 2,251–2,276 |

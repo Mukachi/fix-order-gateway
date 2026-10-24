@@ -8,6 +8,10 @@
 //   durability poll(session_time now);           between inputs (B's time bound)
 #pragma once
 
+#include <vector>
+
+#include <algorithm>
+
 #include <fixgw/journal.hpp>
 
 #include <cerrno>
@@ -98,8 +102,12 @@ public:
     mapped_journal& operator=(const mapped_journal&) = delete;
     ~mapped_journal() { close(); }
 
+    // Pre-filled (note 008's amendment, as D5 does for A): the file's blocks
+    // written at creation, so no write through the mapping makes the file
+    // system allocate them on the order path (on ext4 a stall of ~150 us
+    // about every megabyte of journal), and the mapping faulted in.
     bool create(const std::string& path, std::uint32_t epoch, std::size_t capacity) {
-        if (!map(path, O_CREAT | O_EXCL, capacity)) return false;
+        if (!map(path, O_CREAT | O_EXCL, capacity, true)) return false;
         std::memcpy(base_, journal_format::magic.data(), journal_format::magic.size());
         std::memcpy(base_ + journal_format::magic.size(), &epoch, 4);
         at_ = journal_format::header_size;
@@ -108,7 +116,7 @@ public:
     // Continues after the last complete record (`valid_end` from the reader,
     // after it cut the file).
     bool open_append(const std::string& path, std::size_t valid_end, std::size_t capacity) {
-        if (!map(path, 0, capacity)) return false;
+        if (!map(path, 0, capacity, false)) return false;
         at_ = valid_end;
         return true;
     }
@@ -130,11 +138,20 @@ public:
     std::size_t end() const noexcept { return at_; }
 
 private:
-    bool map(const std::string& path, int flags, std::size_t capacity) {
+    // `prefill`: the whole capacity written with zeros first (a new file).
+    bool map(const std::string& path, int flags, std::size_t capacity, bool prefill) {
         close();
         fd_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC | flags, 0644);
         if (fd_ < 0 || ::ftruncate(fd_, static_cast<off_t>(capacity)) != 0) return false;
-        void* m = ::mmap(nullptr, capacity, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+        if (prefill) {
+            const std::vector<char> zeros(1u << 20, 0);
+            for (std::size_t o = 0; o < capacity; o += zeros.size()) {
+                const std::size_t n = std::min(zeros.size(), capacity - o);
+                if (::pwrite(fd_, zeros.data(), n, static_cast<off_t>(o)) != static_cast<ssize_t>(n)) return false;
+            }
+            if (::fdatasync(fd_) != 0) return false;
+        }
+        void* m = ::mmap(nullptr, capacity, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd_, 0);
         if (m == MAP_FAILED) return false;
         base_ = static_cast<char*>(m);
         capacity_ = capacity;

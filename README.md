@@ -65,11 +65,31 @@ Range over the runs of each path. Conditions, p99 and the method: [RESULTS.md](R
 Against QuickFIX, order to ExecutionReport ([note 008](docs/design/008-measurement.md)):
 
 <!-- results:order-summary -->
-Order-to-ExecutionReport figures: not yet measured (design note 008).
+| Configuration | Survives | Offered /s | p50 | p99 | Venue p50 |
+|---|---|---|---|---|---|
+| QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 9,255–10.2 µs |
+| QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 9,213–9,814 |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 9,203–10.1 µs |
+| QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 31.2 µs–31.7 µs | 37.6 µs–39.1 µs | 9,355–9,918 |
+
+Order to ExecutionReport, application to application, open loop, ns, range over the runs. Highest rate sustained: QuickFIX 1.16.0, file store 20,000/s; QuickFIX 1.16.0, PersistMessages=N 50,000/s. The guarantees, the method and every rate: [RESULTS.md](RESULTS.md).
 <!-- /results -->
 
 The gateway's own cost per message, by stage:
 
 <!-- results:stage-summary -->
-Per-message figures: not yet measured (design note 008).
+| Gateway | Message | Stage | p50 |
+|---|---|---|---|
+| ours | ExecutionReport in | framing and decoding | 305–306 |
+| ours | ExecutionReport in | dictionary check (note 006) | 786–1,316 |
+| ours | ExecutionReport in | order book (note 007) | 299–305 |
+| ours | ExecutionReport in | session, the whole inbound path | 1,273–1,279 |
+| ours | ExecutionReport in | journaled session (book, journal C), inbound | 1,830–1,899 |
+| ours | NewOrderSingle out | body checks (note 007) | 1,238–1,315 |
+| ours | NewOrderSingle out | order book check and record (note 007) | 322–323 |
+| ours | NewOrderSingle out | session send (encode, store) | 153–155 |
+| ours | NewOrderSingle out | journaled session send (checks, book, encode, journal C) | 1,855–1,870 |
+| QuickFIX 1.16.0 | ExecutionReport in | FIX::Message from the bytes, the FIX 4.4 dictionary validating | 2,057–2,060 |
+
+Ns per call, in process, range over the runs, clock cost included. Method: [RESULTS.md](RESULTS.md).
 <!-- /results -->

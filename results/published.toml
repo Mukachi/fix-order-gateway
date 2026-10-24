@@ -39,3 +39,21 @@ runs = ["net-dev-lnx01-20261023T190216Z.json",
         "net-dev-lnx01-20261023T190832Z.json",
         "net-dev-lnx01-20261023T190937Z.json",
         "net-dev-lnx01-20261023T191042Z.json"]
+
+[order_qf]
+note = "008"
+runs = ["order_qf-dev-lnx01-20261024T171138Z.json",
+        "order_qf-dev-lnx01-20261024T171613Z.json",
+        "order_qf-dev-lnx01-20261024T172047Z.json"]
+
+[stage]
+note = "008"
+runs = ["stage-dev-lnx01-20261024T172521Z.json",
+        "stage-dev-lnx01-20261024T172536Z.json",
+        "stage-dev-lnx01-20261024T172551Z.json"]
+
+[stage_qf]
+note = "008"
+runs = ["stage_qf-dev-lnx01-20261024T172529Z.json",
+        "stage_qf-dev-lnx01-20261024T172544Z.json",
+        "stage_qf-dev-lnx01-20261024T172600Z.json"]
