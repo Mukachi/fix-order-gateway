@@ -1,7 +1,9 @@
 // The venue for order_bench and qf_bench (note 008, D2): a plain acceptor
 // session and the venue simulator (note 007) on one pinned CPU, busy-polling,
 // one connection at a time. Each NewOrderSingle is answered at once (a limit
-// order with nothing to cross rests: ExecutionReport New). Its own turnaround
+// order with nothing to cross rests: ExecutionReport New). What one read
+// produces leaves in one send (a send a report costs ~3 us on loopback: behind,
+// the venue would never catch up). Its own turnaround
 // is timed: from the bytes holding an order being read to the report's bytes
 // leaving (CLOCK_MONOTONIC); when a connection ends, its percentiles go to
 // <dir>/venue-<n>.txt, read by the benchmark into its run file.
@@ -42,9 +44,18 @@ struct sink {
     tcp_connection* c = nullptr;
     venue_sim* sim = nullptr;
     session<sink, store>* self = nullptr;
-    int orders = 0;  // in this read
-    void write(std::string_view b) { c->write(b); }
-    void disconnect() { c->close(); }
+    int orders = 0;   // in this read
+    std::string out;  // this read's output, sent once
+    void write(std::string_view b) { out += b; }
+    void send() {
+        if (!out.empty()) c->write(out);
+        out.clear();
+        c->flush();
+    }
+    void disconnect() {
+        send();  // a Logout before the close
+        c->close();
+    }
     void deliver(const message_view<>& m) {
         if (m.msg_type() == "D") ++orders;
         sim->on_message(1, m, [&](int s, std::string_view t, const std::string& b) {
@@ -102,6 +113,7 @@ int main(int argc, char** argv) {
         sk.sim = &sim;
         session<sink, store> s(cfg, sk, st);
         sk.self = &s;
+        sk.out.reserve(1u << 20);
         s.on_connected(clock_now());
         std::vector<std::int64_t> turnaround;
         turnaround.reserve(1u << 20);
@@ -114,12 +126,13 @@ int main(int argc, char** argv) {
             if (n > 0) inbox.append(b, static_cast<std::size_t>(n));
             sk.orders = 0;
             if (!inbox.empty()) inbox.erase(0, s.on_bytes(inbox.data(), inbox.size(), t0));
-            c.flush();
+            sk.send();
             if (sk.orders > 0) {
                 const std::int64_t d = clock_now().mono_ns - t0.mono_ns;
                 for (int i = 0; i < sk.orders; ++i) turnaround.push_back(d);  // each order of the read: the read's
             }
             s.on_tick(t0);
+            sk.send();
         }
         write_summary(dir + "/venue-" + std::to_string(k) + ".txt", turnaround, k);
     }
