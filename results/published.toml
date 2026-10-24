@@ -42,7 +42,7 @@ runs = ["net-dev-lnx01-20261023T190216Z.json",
 
 [order]
 note = "008"
-runs = ["order-dev-lnx01-20261024T210625Z.json", "order-dev-lnx01-20261024T211250Z.json", "order-dev-lnx01-20261024T211914Z.json"]
+runs = ["order-dev-lnx01-20261024T232904Z.json", "order-dev-lnx01-20261024T233528Z.json", "order-dev-lnx01-20261024T234153Z.json"]
 
 [order_qf]
 note = "008"
@@ -50,9 +50,7 @@ runs = ["order_qf-dev-lnx01-20261024T212539Z.json", "order_qf-dev-lnx01-20261024
 
 [stage]
 note = "008"
-runs = ["stage-dev-lnx01-20261024T172521Z.json",
-        "stage-dev-lnx01-20261024T172536Z.json",
-        "stage-dev-lnx01-20261024T172551Z.json"]
+runs = ["stage-dev-lnx01-20261024T234816Z.json", "stage-dev-lnx01-20261024T234825Z.json", "stage-dev-lnx01-20261024T234834Z.json"]
 
 [stage_qf]
 note = "008"

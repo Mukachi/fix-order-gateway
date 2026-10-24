@@ -67,12 +67,12 @@ Against QuickFIX, order to ExecutionReport ([note 008](docs/design/008-measureme
 <!-- results:order-summary -->
 | Configuration | Survives | Offered /s | p50 | p99 | Venue p50 |
 |---|---|---|---|---|---|
-| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.8 µs–116.1 µs | 126.0 µs–129.7 µs | 9,511–9,869 |
-| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.2 µs–141.0 µs | 193.4 µs–194.0 µs | 9,204–9,613 |
-| ours, direct, journal A, block | power loss | 1,000 | 214.4 µs–216.5 µs | 230.3 µs–231.2 µs | 9.8–10.3 µs |
-| ours, direct, journal A, block | power loss | 10,000 | 253.3 µs–254.1 µs | 353.7 µs–355.3 µs | 9,119–9,660 |
-| ours, direct, journal C, busy-poll | process crash | 1,000 | 20.0 µs–20.9 µs | 28.4 µs–30.3 µs | 9,321–9,879 |
-| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.9 µs–19.6 µs | 23.1 µs–23.8 µs | 8,952–9,562 |
+| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.2 µs–116.1 µs | 125.7 µs–129.2 µs | 9,526–9,948 |
+| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.0 µs–140.3 µs | 193.3 µs–194.1 µs | 9,054–9,541 |
+| ours, direct, journal A, block | power loss | 1,000 | 214.7 µs–217.9 µs | 230.3 µs–231.3 µs | 9.8–10.1 µs |
+| ours, direct, journal A, block | power loss | 10,000 | 253.2 µs–257.2 µs | 353.7 µs–359.0 µs | 8,961–9,440 |
+| ours, direct, journal C, busy-poll | process crash | 1,000 | 20.1 µs–20.6 µs | 25.2 µs–25.7 µs | 9,249–9,691 |
+| ours, direct, journal C, busy-poll | process crash | 10,000 | 19.0 µs–19.1 µs | 23.9 µs–24.1 µs | 9,013–9,257 |
 | QuickFIX 1.16.0, file store | process crash | 1,000 | 103.8 µs–107.6 µs | 114.4 µs–119.0 µs | 9.6–12.2 µs |
 | QuickFIX 1.16.0, file store | process crash | 10,000 | 47.1 µs–50.4 µs | 55.7 µs–59.9 µs | 9.4–12.0 µs |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–93.9 µs | 95.9 µs–99.9 µs | 9.5–12.2 µs |
@@ -86,15 +86,15 @@ The gateway's own cost per message, by stage:
 <!-- results:stage-summary -->
 | Gateway | Message | Stage | p50 |
 |---|---|---|---|
-| ours | ExecutionReport in | framing and decoding | 305–306 |
-| ours | ExecutionReport in | dictionary check (note 006) | 786–1,316 |
-| ours | ExecutionReport in | order book (note 007) | 299–305 |
-| ours | ExecutionReport in | session, the whole inbound path | 1,273–1,279 |
-| ours | ExecutionReport in | journaled session (book, journal C), inbound | 1,830–1,899 |
-| ours | NewOrderSingle out | body checks (note 007) | 1,238–1,315 |
-| ours | NewOrderSingle out | order book check and record (note 007) | 322–323 |
-| ours | NewOrderSingle out | session send (encode, store) | 153–155 |
-| ours | NewOrderSingle out | journaled session send (checks, book, encode, journal C) | 1,855–1,870 |
+| ours | ExecutionReport in | framing and decoding | 305 |
+| ours | ExecutionReport in | dictionary check (note 006) | 795–812 |
+| ours | ExecutionReport in | order book (note 007) | 296–301 |
+| ours | ExecutionReport in | session, the whole inbound path | 1,273–1,281 |
+| ours | ExecutionReport in | journaled session (book, journal C), inbound | 1,940–1,959 |
+| ours | NewOrderSingle out | body checks (note 007) | 1,243–1,367 |
+| ours | NewOrderSingle out | order book check and record (note 007) | 324–329 |
+| ours | NewOrderSingle out | session send (encode, store) | 151–152 |
+| ours | NewOrderSingle out | journaled session send (checks, book, encode, journal C) | 1,888–1,895 |
 | QuickFIX 1.16.0 | ExecutionReport in | FIX::Message from the bytes, the FIX 4.4 dictionary validating | 2,057–2,060 |
 
 Ns per call, in process, range over the runs, clock cost included. Method: [RESULTS.md](RESULTS.md).
