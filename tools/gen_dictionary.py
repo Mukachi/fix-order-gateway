@@ -221,6 +221,26 @@ def main():
         w(f'    {{"{t}", {f}, {n}}},')
     w("};")
     w("")
+    # Note 008's amendment: lookups by tag number, not by search.
+    top = max(defined)
+    w(f"// Tag number to node, per message (`messages` order), and tag number to")
+    w(f"// field_info; no_entry where none. Tags above highest_tag are in no table.")
+    w("inline constexpr std::uint16_t no_entry = 0xffff;")
+    w(f"inline constexpr std::uint16_t node_by_tag[{len(runs)}][{top + 1}] = {{")
+    for t, f, n in runs:
+        row = ["0xffff"] * (top + 1)
+        for k in range(f, f + n):
+            row[rows_out[k][0]] = str(k)
+        w("    {" + ",".join(row) + "},  // " + t)
+    w("};")
+    findex = ["0xffff"] * (top + 1)
+    for k, t in enumerate(used):
+        findex[t] = str(k)
+    w(f"inline constexpr std::uint16_t field_by_tag[{top + 1}] = {{")
+    for i in range(0, top + 1, 32):
+        w("    " + ",".join(findex[i:i + 32]) + ",")
+    w("};")
+    w("")
     w("}  // namespace fixgw::fix44")
     with open(out_path, "w") as fh:
         fh.write("\n".join(o) + "\n")

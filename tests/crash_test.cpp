@@ -136,7 +136,9 @@ template <class J>
     crashing<J> j{inner, pl, path, report};
     socket_out out{sock, pl};
     quiet q;
-    journaled_session<crashing<J>, socket_out, quiet> us(ours(), j, out, q);
+    order_config oc;
+    oc.prefault = false;  // crash correctness, not latency: each child faults in only what it uses
+    journaled_session<crashing<J>, socket_out, quiet> us(ours(), j, out, q, oc);
     int sent = 0;
     if (recovering) {
         journal_reader r;

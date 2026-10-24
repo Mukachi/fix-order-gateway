@@ -65,14 +65,11 @@ inline constexpr bool tag_defined(std::uint32_t t) noexcept {
     return t <= fix44::highest_tag && ((fix44::defined_tags[t / 64] >> (t % 64)) & 1) != 0;
 }
 
+// Note 008's amendment: indexed by tag number, not searched.
 inline constexpr const fix44::field_info* find_field(std::uint32_t t) noexcept {
-    std::size_t lo = 0, hi = std::size(fix44::fields);
-    while (lo < hi) {
-        const std::size_t mid = (lo + hi) / 2;
-        if (fix44::fields[mid].tag < t) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo < std::size(fix44::fields) && fix44::fields[lo].tag == t ? &fix44::fields[lo] : nullptr;
+    if (t > fix44::highest_tag) return nullptr;
+    const std::uint16_t k = fix44::field_by_tag[t];
+    return k == fix44::no_entry ? nullptr : &fix44::fields[k];
 }
 
 // v[at, at + n), the caller having checked the bounds: substr's range check
@@ -181,15 +178,11 @@ inline constexpr const fix44::message_def* find_message(std::string_view type) n
     return nullptr;
 }
 
-// The node for `tag` in a message's run, or nullptr.
+// The node for `tag` in a message's run, or nullptr (indexed, note 008).
 inline constexpr const fix44::node* find_node(const fix44::message_def& m, std::uint32_t tag) noexcept {
-    std::size_t lo = m.first, hi = m.first + m.count;
-    while (lo < hi) {
-        const std::size_t mid = (lo + hi) / 2;
-        if (fix44::nodes[mid].tag < tag) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo < m.first + m.count && fix44::nodes[lo].tag == tag ? &fix44::nodes[lo] : nullptr;
+    if (tag > fix44::highest_tag) return nullptr;
+    const std::uint16_t k = fix44::node_by_tag[&m - fix44::messages][tag];
+    return k == fix44::no_entry ? nullptr : &fix44::nodes[k];
 }
 
 }  // namespace detail

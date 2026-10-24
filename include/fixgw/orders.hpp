@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <sys/mman.h>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -31,6 +32,11 @@ struct order_config {
     std::size_t throttle_messages = 0;          // D4: N per window; 0 is no throttle
     std::int64_t throttle_window_ns = 1'000'000'000;
     std::int64_t stale_ns = 2'000'000'000;      // D5: an order or replace older than this is not resent
+    // Note 008's amendment: the tables' pages faulted in at construction
+    // (MAP_POPULATE), so no first write takes a fault on the order path; their
+    // memory (~100 MB at the defaults) resident for the session's life. Off:
+    // pages faulted in as used, for tests and small machines.
+    bool prefault = true;
 };
 
 // Quantities and prices as integers in units of 1e-8 (FIX's floats carried
@@ -124,14 +130,14 @@ struct order_event {
 
 class order_book {
 public:
-    // The tables come zeroed from calloc, so the pages are the kernel's zero
-    // page until written: a session pays for what it uses, not for the
-    // capacity (~100 MB at the defaults). All-zero is an empty entry.
+    // The tables are anonymous mappings, zeroed by the kernel (all-zero is an
+    // empty entry); faulted in at once if `prefault` (the default), otherwise
+    // as they are used.
     explicit order_book(const order_config& c = {})
-        : cfg_(c), orders_(zeroed<order>(c.max_orders)), orders_size_(c.max_orders),
-          ids_(zeroed<id_entry>(table_size(c.max_orders * 4))), ids_size_(table_size(c.max_orders * 4)),
-          exec_ids_(zeroed<id_entry>(table_size(c.max_exec_ids))), exec_ids_size_(table_size(c.max_exec_ids)),
-          arena_(zeroed<char>(c.id_bytes)), sends_(c.throttle_messages ? c.throttle_messages : 1) {
+        : cfg_(c), orders_(zeroed<order>(c.max_orders, c.prefault)), orders_size_(c.max_orders),
+          ids_(zeroed<id_entry>(table_size(c.max_orders * 4), c.prefault)), ids_size_(table_size(c.max_orders * 4)),
+          exec_ids_(zeroed<id_entry>(table_size(c.max_exec_ids), c.prefault)), exec_ids_size_(table_size(c.max_exec_ids)),
+          arena_(zeroed<char>(c.id_bytes, c.prefault)), sends_(c.throttle_messages ? c.throttle_messages : 1) {
     }
 
     struct verdict {
@@ -282,17 +288,19 @@ private:
         std::uint32_t order = none;
     };
 
-    struct free_deleter {
-        void operator()(void* p) const noexcept { std::free(p); }
+    struct unmap {
+        std::size_t bytes = 0;
+        void operator()(void* p) const noexcept { ::munmap(p, bytes); }
     };
     template <class T>
-    using table = std::unique_ptr<T[], free_deleter>;
+    using table = std::unique_ptr<T[], unmap>;
     template <class T>
-    static table<T> zeroed(std::size_t n) {
+    static table<T> zeroed(std::size_t n, bool prefault) {
         static_assert(std::is_trivially_destructible_v<T> && std::is_trivially_copyable_v<T>);
-        void* p = std::calloc(n, sizeof(T));
-        if (!p) throw std::bad_alloc();
-        return table<T>(static_cast<T*>(p));
+        const std::size_t bytes = (n ? n : 1) * sizeof(T);
+        void* p = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | (prefault ? MAP_POPULATE : 0), -1, 0);
+        if (p == MAP_FAILED) throw std::bad_alloc();
+        return table<T>(static_cast<T*>(p), unmap{bytes});
     }
 
     static std::size_t table_size(std::size_t n) {
