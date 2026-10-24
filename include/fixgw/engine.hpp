@@ -133,6 +133,10 @@ struct engine_config {
     socket_options socket{};
     std::uint16_t port = 0;                // initiator: where to connect
     std::uint32_t ip = INADDR_LOOPBACK;    // host order
+    // Initiator: the wait before reconnecting after a lost connection, then
+    // doubling to 30 s, reset on logon (note 007: 100 ms, from 1 s; a venue
+    // limiting logon attempts more tightly is given a longer one).
+    std::int64_t reconnect_first_ns = 100'000'000;
 };
 
 template <class Strategy, class Policy>
@@ -141,7 +145,7 @@ public:
     engine(const session_config& session, const engine_config& cfg, Strategy& journal, Policy& policy, app_ring& in,
            app_ring& out, const order_config& orders = {})
         : cfg_(cfg), out_adapter_{*this}, us_(session, journal, out_adapter_, policy, orders), in_(in), out_(out),
-          initiator_(session.role == session_role::initiator) {
+          initiator_(session.role == session_role::initiator), backoff_(cfg.reconnect_first_ns) {
         doorbell_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
         epoll_ = ::epoll_create1(EPOLL_CLOEXEC);
         epoll_event e{};
@@ -286,6 +290,14 @@ private:
         }
     }
     void lost(session_time now) {
+        // Once per connection: a write failing as the peer closes (taken for
+        // "not reading") and the end-of-file read after it both come here, and
+        // a second call doubled the reconnect delay and journaled a second
+        // disconnect.
+        if (!conn_.open()) {
+            not_reading_ = false;
+            return;
+        }
         // Our Logout unanswered when the connection went: not logged out yet;
         // reconnect, catch up and log out again (nothing left in doubt).
         if (logging_out_ && us_.state().logging_out()) logout_pending_ = true;

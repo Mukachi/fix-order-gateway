@@ -60,6 +60,7 @@ void run_mode(wait_mode mode, bool drop_midway) {
     bool ok = accept_one();
     constexpr int n = 2000;
     int submitted = 0, received = 0, out_of_order = 0, dropped_at = drop_midway ? n / 2 : -1, reconnects = 0;
+    std::int64_t reconnect_ms = 0;
     const std::int64_t give_up = clock_now().mono_ns + 20'000'000'000;
     while (ok && received < n && clock_now().mono_ns < give_up) {
         // the counterparty
@@ -96,16 +97,20 @@ void run_mode(wait_mode mode, bool drop_midway) {
             vc.close();
             v.on_disconnected(clock_now());
             dropped_at = -1;
+            const std::int64_t dropped = clock_now().mono_ns;
             ok = accept_one();
+            reconnect_ms = (clock_now().mono_ns - dropped) / 1'000'000;
             ++reconnects;
         }
     }
     stop = true;
     t.join();
-    check(ok && received == n && out_of_order == 0 && (!drop_midway || reconnects == 1),
+    check(ok && received == n && out_of_order == 0 && (!drop_midway || (reconnects == 1 && reconnect_ms < 250)),
           std::string("engine, ") + name(mode) + (drop_midway ? ", connection dropped halfway" : "") + ": " +
               std::to_string(received) + " of " + std::to_string(n) + " ExecutionReports reached the application in order" +
-              (drop_midway ? ", after " + std::to_string(reconnects) + " reconnection" : ""));
+              (drop_midway ? ", after " + std::to_string(reconnects) + " reconnection, " + std::to_string(reconnect_ms) +
+                                 " ms after the drop (first reconnect delay 100 ms)"
+                           : ""));
 }
 
 void ring_limits() {

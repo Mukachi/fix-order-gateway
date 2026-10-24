@@ -109,7 +109,7 @@ public:
     pipeline_engine(const session_config& s, const engine_config& cfg, journal_file& file, Policy& policy, app_ring& in,
                     app_ring& out, cpus c = {}, const order_config& orders = {})
         : cfg_(cfg), journal_(file), tagged_{*this}, us_(s, journal_, tagged_, policy, orders), in_(in), out_(out), cpus_(c),
-          ring_(std::make_unique<stage_ring>()) {
+          ring_(std::make_unique<stage_ring>()), backoff_(cfg.reconnect_first_ns) {
         inbox_.reserve(64u << 10);
     }
 

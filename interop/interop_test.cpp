@@ -8,7 +8,7 @@
 //     written to QuickFIX's API: the same, the drop by our side as acceptor.
 // Each checks every order answered, in order, and no Reject either way.
 //
-// Usage: interop_test <executor> <qf_initiator> <FIX44.xml>
+// Usage: interop_test <executor> <qf_initiator> <FIX44.xml> [qf_acceptor]
 #include "../tests/fix_text.hpp"
 
 #include <fixgw/engine.hpp>
@@ -389,11 +389,136 @@ void through_engine(const std::string& executor, const std::string& dictionary, 
               " complaints");
 }
 
+// 4. Cancels and replaces through the engine (note 007, S7, option A),
+// against interop/qf_acceptor (QuickFIX's session layer and FIX 4.4
+// dictionary, an acceptor written to its API): 300 orders; on each New, every
+// second order replaced to 200 and every third canceled (after its replace,
+// if both). The acceptor fills every fifth at once, so requests for those are
+// refused by our book or rejected by QuickFIX's side as too late. Every
+// order's final state checked against those rules.
+void cancels_and_replaces(const std::string& acceptor, const std::string& dictionary, const std::string& dir) {
+    std::filesystem::create_directories(dir);
+    const std::uint16_t port = free_port();
+    const pid_t qf = spawn({acceptor, settings(dir, true, port, dictionary)}, dir + "/acceptor.out");
+    ::usleep(200'000);
+    struct quiet {
+        void log(session_log, std::string_view, std::uint64_t) {}
+        bool resend(const message_view<>&) { return true; }
+        bool release(std::string_view, std::string_view) { return true; }
+    } q;
+    session_config cfg;
+    cfg.role = session_role::initiator;
+    cfg.sender_comp_id = "CLIENT";
+    cfg.target_comp_id = "VENUE";
+    journal_file f;
+    f.create(dir + "/engine.journal", 1, 8u << 20);
+    auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
+    engine_config ec;
+    ec.port = port;
+    order_config oc;
+    oc.max_orders = 4096;
+    oc.max_exec_ids = 1 << 14;
+    oc.id_bytes = 1 << 18;
+    pipeline_engine<quiet> e(cfg, ec, f, q, *in, *out, {}, oc);
+    std::atomic<bool> stop{false};
+    std::thread t([&] { e.run(stop); });
+    constexpr int n = 300;
+    std::map<std::string, order_event> last;  // by the order's first ClOrdID
+    std::map<std::string, std::string> first_of;  // any ClOrdID to its order's first
+    std::set<std::string> asked;
+    int submitted = 0, inconsistent = 0, cancel_rejects = 0, others = 0;
+    const auto ts = [] {
+        char b[utc_timestamp_length];
+        format_utc_timestamp(clock_now().utc_ms, b);
+        return std::string(b, sizeof(b));
+    };
+    const auto request = [&](const std::string& type, const std::string& id, const std::string& orig, int qty) {
+        first_of[id] = first_of.count(orig) ? first_of[orig] : orig;
+        const std::string body = type == "F" ? "41=" + orig + "|11=" + id + "|55=VOD.L|54=1|60=" + ts() + "|38=" + std::to_string(qty) + "|"
+                                             : "41=" + orig + "|11=" + id + "|21=1|55=VOD.L|54=1|60=" + ts() + "|38=" +
+                                                   std::to_string(qty) + "|40=2|44=72.5|";
+        while (!submit_order(*in, type, test::soh(body))) {
+        }
+    };
+    const std::int64_t give_up = clock_now().mono_ns + 30'000'000'000;
+    std::int64_t last_event = clock_now().mono_ns;
+    bool logout_sent = false;
+    while (!e.finished() && clock_now().mono_ns < give_up) {
+        if (e.connected() && submitted < n) {
+            const std::string id = "K" + std::to_string(submitted);
+            first_of[id] = id;
+            if (submit_order(*in, "D", test::soh("11=" + id + "|21=1|55=VOD.L|54=1|60=" + ts() + "|38=100|40=2|44=72.5|"))) ++submitted;
+        }
+        app_slot s;
+        while (out->try_pop(s)) {
+            last_event = clock_now().mono_ns;
+            if (s.kind == app_slot::order_state) {
+                const order_event ev = slot_event(s);
+                inconsistent += ev.inconsistent;
+                const std::string first = first_of.count(std::string(ev.id())) ? first_of[std::string(ev.id())] : std::string(ev.id());
+                last[first] = ev;
+                cancel_rejects += ev.exec_type == '9';
+                const int i = std::atoi(first.c_str() + 1);
+                if (ev.exec_type == '0' && ev.ord_status == ord_status::new_ && !asked.count(first)) {  // acknowledged
+                    asked.insert(first);
+                    if (i % 2 == 0) request("G", "R" + std::to_string(i), first, 200);
+                    else if (i % 3 == 0) request("F", "C" + std::to_string(i), first, 100);
+                } else if (ev.exec_type == '5' && i % 3 == 0) {  // replaced: now cancel it
+                    request("F", "C" + std::to_string(i), "R" + std::to_string(i), 200);
+                }
+            } else if (s.kind == app_slot::message) {
+                const std::string_view m(s.data, s.length);
+                if (m.find("\x01" "35=8\x01") == std::string_view::npos && m.find("\x01" "35=9\x01") == std::string_view::npos) ++others;
+            }
+        }
+        if (submitted == n && !logout_sent && clock_now().mono_ns - last_event > 500'000'000) {
+            submit_logout(*in);
+            logout_sent = true;
+        }
+    }
+    const bool finished = e.finished();
+    stop = true;
+    t.join();
+    ::kill(qf, SIGTERM);
+    ::waitpid(qf, nullptr, 0);
+    int right = 0;
+    std::string first_wrong;
+    for (int i = 0; i < n; ++i) {
+        const std::string id = "K" + std::to_string(i);
+        const auto it = last.find(id);
+        char want;
+        long qty;
+        if (i % 5 == 4) {  // the acceptor's fifth, sixth... (its own count from 1): filled
+            want = ord_status::filled;
+            qty = 100;
+        } else if (i % 3 == 0) {
+            want = ord_status::canceled;
+            qty = i % 2 == 0 ? 200 : 100;
+        } else {
+            want = ord_status::new_;
+            qty = i % 2 == 0 ? 200 : 100;
+        }
+        const bool ok = it != last.end() && it->second.ord_status == want && it->second.order_qty == qty * fixed_one;
+        right += ok;
+        if (!ok && first_wrong.empty())
+            first_wrong = id + (it == last.end() ? " no state" : std::string(" ") + it->second.ord_status + " qty " +
+                                                                 std::to_string(it->second.order_qty / fixed_one)) +
+                          ", expected " + want + " " + std::to_string(qty);
+    }
+    const int complaints = quickfix_complaints(dir);
+    check(finished && right == n && inconsistent == 0 && others == 0 && complaints == 0,
+          "S7 (note 007) cancels and replaces through the engine against QuickFIX (interop/qf_acceptor): " + std::to_string(right) +
+              " of " + std::to_string(n) + " orders end as expected (filled, canceled, replaced to 200, or new), " +
+              std::to_string(cancel_rejects) + " OrderCancelRejects (requests for filled orders), " + std::to_string(inconsistent) +
+              " inconsistent, logged out (" + (finished ? "engine finished" : "engine not finished") + "); QuickFIX's log " +
+              std::to_string(complaints) + " complaints" + (first_wrong.empty() ? "" : "; first wrong " + first_wrong));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: interop_test <executor> <qf_initiator> <FIX44.xml>\n");
+        std::fprintf(stderr, "usage: interop_test <executor> <qf_initiator> <FIX44.xml> [qf_acceptor]\n");
         return 2;
     }
     ::signal(SIGPIPE, SIG_IGN);
@@ -403,6 +528,7 @@ int main(int argc, char** argv) {
     our_initiator(argv[1], argv[3], std::string(d) + "/executor");
     our_acceptor(argv[2], argv[3], std::string(d) + "/initiator");
     through_engine(argv[1], argv[3], std::string(d) + "/engine");
+    if (argc > 4) cancels_and_replaces(argv[4], argv[3], std::string(d) + "/changes");
     if (!test::failures) std::filesystem::remove_all(d);
     else std::printf("kept for inspection: %s\n", d);
     return test::result();
