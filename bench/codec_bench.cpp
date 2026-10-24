@@ -11,6 +11,7 @@
 // runs as episodes, each after the same fixed prior work, classified by the
 // branch mispredictions counted in it into the predictor's states, and
 // published per state (note 009, amendment of 2026-10-22).
+#include "branch_misses.hpp"
 #include "representation_a.hpp"
 
 #include <fixgw/decode.hpp>
@@ -113,35 +114,6 @@ const std::vector<std::uint32_t>& visit_order() {
     }();
     return order;
 }
-
-// This thread's branch mispredictions, user space only, read outside the timing
-// windows. Needs perf_event_paranoid 2 or lower (bench-on sets it).
-class branch_misses {
-public:
-    branch_misses() {
-        perf_event_attr a{};
-        a.type = PERF_TYPE_HARDWARE;
-        a.size = sizeof(a);
-        a.config = PERF_COUNT_HW_BRANCH_MISSES;
-        a.exclude_kernel = 1;
-        a.exclude_hv = 1;
-        fd_ = static_cast<int>(syscall(SYS_perf_event_open, &a, 0, -1, -1, 0));
-    }
-    ~branch_misses() {
-        if (fd_ >= 0) close(fd_);
-    }
-    branch_misses(const branch_misses&) = delete;
-    branch_misses& operator=(const branch_misses&) = delete;
-    bool ok() const { return fd_ >= 0; }
-    std::uint64_t read() const {
-        std::uint64_t v = 0;
-        if (::read(fd_, &v, sizeof(v)) != sizeof(v)) v = 0;
-        return v;
-    }
-
-private:
-    int fd_ = -1;
-};
 
 // The fixed work before every episode: sorting 1,000,000 timing-like values
 // (600-663 with a thin tail, fixed seed). Sorting the harness's own timings

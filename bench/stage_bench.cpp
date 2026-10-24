@@ -7,14 +7,20 @@
 // its window. Stages:
 //   ExecutionReport in: framing and decoding; the dictionary check (note 006)
 //   alone; the order book (note 007) alone; the session's whole inbound path;
-//   the journaled session's (book and journal C).
+//   the journaled session's (book and journal C, its file on tmpfs).
 //   NewOrderSingle out: the body checks; the book's check and record; the
 //   session's send (encode, store); the journaled session's send (checks,
 //   book, encode, journal C).
+// Each stage's branch mispredictions per message, counted over its whole loop
+// (the counter read before and after it, nothing added inside: what the loop
+// does outside the window counted too, so the dictionary check's includes the
+// decoding before it), for note 008's open spread between runs.
 // QuickFIX's parse of the same ExecutionReports: qf_bench parse. Run JSON
 // through lockfree-ipc's harness. Design: docs/design/008-measurement.md
 //
 // Usage: stage_bench [output.json]
+#include "branch_misses.hpp"
+#include "filesystem.hpp"
 #include "stage_inputs.hpp"
 
 #include <fixgw/durability.hpp>
@@ -99,13 +105,18 @@ struct point {
     std::string stage, direction;
     overhead cost{};
     bool ok = true;
+    double mispredictions = -1;  // per message, the whole loop; -1: not counted
 };
+
+const branch_misses* counter = nullptr;
+double last_mispredictions = -1;
 
 // Times f(i) for every input; prepare(i), outside the window, first.
 template <class Prepare, class F>
 overhead per_call(Prepare&& prepare, F&& f) {
     std::vector<ticks> t;
     t.reserve(stage::count - stage::warmup);
+    const std::uint64_t m0 = counter ? counter->read() : 0;
     for (std::size_t i = 0; i < stage::count; ++i) {
         prepare(i);
         const ticks a = start();
@@ -113,6 +124,7 @@ overhead per_call(Prepare&& prepare, F&& f) {
         const ticks b = stop();
         if (i >= stage::warmup) t.push_back(b - a);
     }
+    last_mispredictions = counter ? static_cast<double>(counter->read() - m0) / static_cast<double>(stage::count) : -1;
     overhead o = summarise_overhead(std::move(t));
     o.warmup_discarded = stage::warmup;
     o.cpu = cpu;
@@ -132,17 +144,25 @@ int main(int argc, char** argv) {
         return run.finish(false, "stage_bench");
     }
     const double tpn = clk.cal.ticks_per_ns;
+    const branch_misses bm;
+    if (bm.ok()) counter = &bm;
+    else std::fprintf(stderr, "stage_bench: branch mispredictions not counted (perf_event_paranoid above 2?)\n");
     const auto reports = stage::reports();
     const auto bodies = stage::order_bodies();
     const fx::session_time now = when();
     std::vector<point> points;
+    const auto add = [&](point p) {
+        p.mispredictions = last_mispredictions;
+        points.push_back(std::move(p));
+    };
     bool ok = true;
+    std::string fs_c = "unknown";  // journal C's file system (tmpfs: note 004's amendment)
 
-    points.push_back({"none", "-", per_call([](std::size_t) {}, [](std::size_t) {})});
+    add({"none", "-", per_call([](std::size_t) {}, [](std::size_t) {})});
     {
         fx::message_view<> v;
         bool all = true;
-        points.push_back({"framing and decoding", "ExecutionReport in", per_call([](std::size_t) {}, [&](std::size_t i) {
+        add({"framing and decoding", "ExecutionReport in", per_call([](std::size_t) {}, [&](std::size_t i) {
                               const auto f = fx::frame(reports[i].data(), reports[i].size(), 65536);
                               all &= f.status == fx::frame_status::complete && fx::decode(reports[i].data(), f.length, v).ok;
                           })});
@@ -151,7 +171,7 @@ int main(int argc, char** argv) {
     {
         fx::message_view<> v;
         bool all = true;
-        points.push_back({"dictionary check (note 006)", "ExecutionReport in",
+        add({"dictionary check (note 006)", "ExecutionReport in",
                           per_call([&](std::size_t i) { fx::decode(reports[i].data(), reports[i].size(), v); },
                                    [&](std::size_t) { all &= fx::validate(v, "8").ok && fx::conditional_rules(v, "8").ok; })});
         points.back().ok = all;
@@ -162,7 +182,7 @@ int main(int argc, char** argv) {
         fx::message_view<> v;
         fx::order_event e;
         bool all = true;
-        points.push_back({"order book (note 007)", "ExecutionReport in",
+        add({"order book (note 007)", "ExecutionReport in",
                           per_call([&](std::size_t i) { fx::decode(reports[i].data(), reports[i].size(), v); },
                                    [&](std::size_t) { all &= b->inbound(v, e) && !e.inconsistent; })});
         points.back().ok = all;
@@ -174,13 +194,15 @@ int main(int argc, char** argv) {
         s.on_connected(now);
         const std::string logon = venue_logon();
         s.on_bytes(logon.data(), logon.size(), now);
-        points.push_back({"session, the whole inbound path", "ExecutionReport in",
+        add({"session, the whole inbound path", "ExecutionReport in",
                           per_call([](std::size_t) {}, [&](std::size_t i) { s.on_bytes(reports[i].data(), reports[i].size(), now); })});
         points.back().ok = k.delivered == stage::count;
     }
     {
-        char tmpl[] = "stage_bench_XXXXXX";
+        char tmpl[64];
+        std::snprintf(tmpl, sizeof(tmpl), "%s", bench::journal_c_template);
         const char* d = ::mkdtemp(tmpl);
+        if (d) fs_c = bench::filesystem_of(d);
         fx::mapped_journal j;
         const std::string path = std::string(d ? d : ".") + "/in.journal";
         ok &= j.create(path, 1, 512u << 20);
@@ -191,14 +213,14 @@ int main(int argc, char** argv) {
         const std::string logon = venue_logon();
         us->on_bytes(logon.data(), logon.size(), now);
         for (std::size_t i = 0; i < stage::count; ++i) us->send("D", bodies[i], now);  // the orders the reports answer
-        points.push_back({"journaled session (book, journal C), inbound", "ExecutionReport in",
+        add({"journaled session (book, journal C), inbound", "ExecutionReport in",
                           per_call([](std::size_t) {}, [&](std::size_t i) { us->on_bytes(reports[i].data(), reports[i].size(), now); })});
         points.back().ok = us->orders().orders() == stage::count && us->orders().exec_ids() == stage::count;
         if (d) std::filesystem::remove_all(d);
     }
     {
         bool all = true;
-        points.push_back({"body checks (note 007)", "NewOrderSingle out", per_call([](std::size_t) {}, [&](std::size_t i) {
+        add({"body checks (note 007)", "NewOrderSingle out", per_call([](std::size_t) {}, [&](std::size_t i) {
                               all &= fx::validate_body("D", bodies[i]).ok && fx::conditional_rules_body("D", bodies[i]).ok;
                           })});
         points.back().ok = all;
@@ -206,7 +228,7 @@ int main(int argc, char** argv) {
     {
         auto b = std::make_unique<fx::order_book>(book());
         bool all = true;
-        points.push_back({"order book check and record (note 007)", "NewOrderSingle out", per_call([](std::size_t) {}, [&](std::size_t i) {
+        add({"order book check and record (note 007)", "NewOrderSingle out", per_call([](std::size_t) {}, [&](std::size_t i) {
                               const auto v = b->check("D", bodies[i], now);
                               all &= v.ok;
                               if (v.ok) b->record("D", bodies[i], now);
@@ -221,14 +243,16 @@ int main(int argc, char** argv) {
         const std::string logon = venue_logon();
         s.on_bytes(logon.data(), logon.size(), now);
         bool all = true;
-        points.push_back({"session send (encode, store)", "NewOrderSingle out", per_call([](std::size_t) {}, [&](std::size_t i) {
+        add({"session send (encode, store)", "NewOrderSingle out", per_call([](std::size_t) {}, [&](std::size_t i) {
                               all &= s.send("D", bodies[i], now) == fx::send_result::sent;
                           })});
         points.back().ok = all;
     }
     {
-        char tmpl[] = "stage_bench_XXXXXX";
+        char tmpl[64];
+        std::snprintf(tmpl, sizeof(tmpl), "%s", bench::journal_c_template);
         const char* d = ::mkdtemp(tmpl);
+        if (d) fs_c = bench::filesystem_of(d);
         fx::mapped_journal j;
         const std::string path = std::string(d ? d : ".") + "/out.journal";
         ok &= j.create(path, 1, 512u << 20);
@@ -239,7 +263,7 @@ int main(int argc, char** argv) {
         const std::string logon = venue_logon();
         us->on_bytes(logon.data(), logon.size(), now);
         bool all = true;
-        points.push_back({"journaled session send (checks, book, encode, journal C)", "NewOrderSingle out",
+        add({"journaled session send (checks, book, encode, journal C)", "NewOrderSingle out",
                           per_call([](std::size_t) {}, [&](std::size_t i) { all &= us->send("D", bodies[i], now) == fx::send_result::sent; })});
         points.back().ok = all;
         if (d) std::filesystem::remove_all(d);
@@ -253,6 +277,7 @@ int main(int argc, char** argv) {
     run.w.member("gateway", std::string("ours"));
     run.w.member("cpu", cpu);
     run.w.member("messages", stage::count - stage::warmup);
+    run.w.member("journal_c_filesystem", fs_c);
     run.w.member("lockfree_ipc_commit", FIXGW_LFIPC_COMMIT);
     run.w.key("points");
     run.w.begin_array();
@@ -268,9 +293,10 @@ int main(int argc, char** argv) {
         run.w.member("p99_ns", ns(p.cost.p99));
         run.w.member("p999_ns", ns(p.cost.p999));
         run.w.member("max_ns", ns(p.cost.max));
+        run.w.member("mispredictions_per_message", p.mispredictions);
         run.w.end_object();
-        std::printf("%-58s %-20s %s p50 %8.1f p99 %8.1f p99.9 %8.1f max %9.1f ns\n", p.stage.c_str(), p.direction.c_str(),
-                    p.ok ? "  " : "!!", ns(p.cost.p50), ns(p.cost.p99), ns(p.cost.p999), ns(p.cost.max));
+        std::printf("%-58s %-20s %s p50 %8.1f p99 %8.1f p99.9 %8.1f max %9.1f ns  mispredictions %.2f\n", p.stage.c_str(), p.direction.c_str(),
+                    p.ok ? "  " : "!!", ns(p.cost.p50), ns(p.cost.p99), ns(p.cost.p999), ns(p.cost.max), p.mispredictions);
     }
     run.w.end_array();
     run.w.end_object();

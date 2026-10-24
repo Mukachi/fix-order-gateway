@@ -8,6 +8,8 @@
 //   pipeline, journal A, busy-poll   survives power loss (the default)
 //   direct loop, journal A, blocking survives power loss
 //   direct loop, journal C, busy-poll survives a process crash
+// Journal A's file in a directory made here (ext4 on dev-lnx01), C's on tmpfs
+// (/dev/shm: C needs no disk, and on ext4 writeback stalls it), both recorded.
 // Rates 1,000 and 10,000 a second, then 20,000, 50,000, 100,000 until one is
 // not sustained. 100,000 orders a point after 5,000 of warm-up. After each
 // point the venue's own turnaround (order_venue's file) goes into the run.
@@ -19,6 +21,8 @@
 #include <fixgw/durability.hpp>
 #include <fixgw/engine.hpp>
 #include <fixgw/pipeline.hpp>
+
+#include "filesystem.hpp"
 
 #include <lfipc/bench/clock_block.hpp>
 #include <lfipc/bench/cross_cpu.hpp>
@@ -256,6 +260,11 @@ int main(int argc, char** argv) {
     char tmpl[] = "order_bench_journals_XXXXXX";
     const char* dir_c = ::mkdtemp(tmpl);
     const std::string dir = dir_c ? std::filesystem::absolute(dir_c).string() : ".";
+    char tmpl_c[64];
+    std::snprintf(tmpl_c, sizeof(tmpl_c), "%s", bench::journal_c_template);
+    const char* c_dir_c = ::mkdtemp(tmpl_c);
+    const std::string c_dir = c_dir_c ? c_dir_c : dir;
+    const std::string fs_a = bench::filesystem_of(dir), fs_c = bench::filesystem_of(c_dir);
     std::vector<point> points;
     int k = 0;
     const auto run_point = [&](auto&& measure, double rate) {
@@ -278,8 +287,9 @@ int main(int argc, char** argv) {
     };
     ladder([&](double rate, int i) { return pipeline_a(port, rate, tpn, dir, i); });
     ladder([&](double rate, int i) { return direct<fx::fsync_each>(port, rate, tpn, dir, i, fx::wait_mode::block, "A"); });
-    ladder([&](double rate, int i) { return direct<fx::mapped_journal>(port, rate, tpn, dir, i, fx::wait_mode::busy, "C"); });
+    ladder([&](double rate, int i) { return direct<fx::mapped_journal>(port, rate, tpn, c_dir, i, fx::wait_mode::busy, "C"); });
     if (dir_c) std::filesystem::remove_all(dir);
+    if (c_dir_c) std::filesystem::remove_all(c_dir);
 
     write_noise_block(run.w, noise, tpn);
     write_clock_block(run.w, clk);
@@ -293,6 +303,8 @@ int main(int argc, char** argv) {
     run.w.member("engine_cpu", engine_cpu);
     run.w.member("journal_cpu", journal_cpu);
     run.w.member("sender_cpu", sender_cpu);
+    run.w.member("journal_a_filesystem", fs_a);
+    run.w.member("journal_c_filesystem", fs_c);
     run.w.member("lockfree_ipc_commit", FIXGW_LFIPC_COMMIT);
     run.w.key("points");
     run.w.begin_array();

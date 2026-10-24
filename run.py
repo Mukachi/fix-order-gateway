@@ -391,6 +391,17 @@ def order_rows(lf, sets, rates=None, figures=("p50_ns", "p99_ns", "p999_ns", "ma
     return rows, highest, partial
 
 
+def journal_fs(sets):
+    """Where our journals were: A on the disk, C on tmpfs (note 004's amendment); runs before it recorded neither (ext4)."""
+    if "order" not in sets:
+        return "–"
+    fs = {(d["order"].get("journal_a_filesystem", "ext4"), d["order"].get("journal_c_filesystem", "ext4")) for _, d in sets["order"][1]}
+    if len(fs) != 1:
+        raise ReportError("order: runs kept their journals on different file systems")
+    a, c = fs.pop()
+    return f"A on {a}, C on {c}"
+
+
 def order_section(lf, sets):
     rows, highest, partial = order_rows(lf, sets)
     notes = [sets[n][0] for n in ("order", "order_qf") if n in sets]
@@ -406,7 +417,7 @@ def order_section(lf, sets):
            "is the configuration's guarantee: QuickFIX's file store never syncs (counted: 0 fsync and 0 fdatasync calls), so "
            "it survives a process crash like our journal C; our journal A makes each input durable with fdatasync first and "
            "survives power loss, which QuickFIX documents no setting for. 'Venue p50' is the venue's own turnaround, read "
-           f"to written. {counts}.", "",
+           f"to written. Journal files: {journal_fs(sets)}. {counts}.", "",
            lf.table(["Configuration", "Survives", "Offered /s", "p50", "p99", "p99.9", "max", "Venue p50"], rows), "",
            f"Highest rate sustained in every run: {peak}.", ""]
     if partial:
@@ -439,7 +450,30 @@ def stage_section(lf, sets):
             "(sequence numbers and ExecIDs advance), the same bytes for both (bench/stage_inputs.hpp). What a stage needs but "
             "does not own (decoding, before a check that reads a decoded message) is done outside its window. QuickFIX's "
             f"reference: a FIX::Message constructed from the same bytes with its FIX 4.4 dictionary validating. {counts}.", "",
-            lf.table(["Gateway", "Message", "Stage", "p50", "p99", "p99.9"], stage_rows(lf, sets)), ""]
+            lf.table(["Gateway", "Message", "Stage", "p50", "p99", "p99.9"], stage_rows(lf, sets)), ""] + stage_by_run(lf, sets)
+
+
+def stage_by_run(lf, sets):
+    """Ours, run by run: each stage's p50 beside its branch mispredictions per
+    message (counted over the stage's whole loop), for whether a stage's spread
+    between runs follows the branch predictor (note 008)."""
+    if "stage" not in sets:
+        return []
+    runs = sets["stage"][1]
+    if not all("mispredictions_per_message" in p for _, d in runs for p in d["stage"]["points"]):
+        return []
+    head = ["Stage"] + [f"run {i + 1}: p50, mispredictions" for i in range(len(runs))]
+    rows = []
+    for i, p0 in enumerate(runs[0][1]["stage"]["points"]):
+        cells = []
+        for _, d in runs:
+            p = d["stage"]["points"][i]
+            m = p["mispredictions_per_message"]
+            cells.append(f"{lf.ns(p['p50_ns'])}, {m:.2f}" if m >= 0 else f"{lf.ns(p['p50_ns'])}, –")
+        rows.append([p0["stage"]] + cells)
+    return ["Ours, run by run: each stage's p50 and its branch mispredictions per message, counted over the stage's whole "
+            "loop (what it does outside the window included: the dictionary check's and the order book's include the "
+            "decoding before them).", "", lf.table(head, rows), ""]
 
 
 def results_md(lf, sets, withheld):

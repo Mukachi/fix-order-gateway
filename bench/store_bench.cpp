@@ -12,6 +12,8 @@
 #include <fixgw/encode.hpp>
 #include <fixgw/recovery.hpp>
 
+#include "filesystem.hpp"
+
 #include <lfipc/bench/clock_block.hpp>
 #include <lfipc/bench/cross_cpu.hpp>
 #include <lfipc/bench/noise_block.hpp>
@@ -28,7 +30,6 @@
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <sys/statfs.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -144,18 +145,6 @@ point_result measure(J& j, double ticks_per_ns, double rate, std::string strateg
     return r;
 }
 
-std::string filesystem_of(const std::string& dir) {
-    struct statfs s;
-    if (::statfs(dir.c_str(), &s) != 0) return "unknown";
-    switch (static_cast<unsigned long>(s.f_type)) {
-        case 0xEF53: return "ext4";
-        case 0x01021994: return "tmpfs";
-        case 0x58465342: return "xfs";
-        case 0x9123683E: return "btrfs";
-        default: return "other";
-    }
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -176,7 +165,7 @@ int main(int argc, char** argv) {
         return run.finish(false, "store_bench");
     }
     const std::string dir = std::filesystem::absolute(dir_c).string();
-    const std::string fs = filesystem_of(dir);
+    const std::string fs = bench::filesystem_of(dir);
     const double tpn = clk.cal.ticks_per_ns;
     // D5: each journal pre-filled; a point writes about 2 MB, so 8 MB holds it
     // without an extension on the path (C maps the same size).
