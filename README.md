@@ -67,12 +67,18 @@ Against QuickFIX, order to ExecutionReport ([note 008](docs/design/008-measureme
 <!-- results:order-summary -->
 | Configuration | Survives | Offered /s | p50 | p99 | Venue p50 |
 |---|---|---|---|---|---|
+| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.2 µs–116.1 µs | 125.9 µs–129.0 µs | 9,146–10.4 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 139.6 µs–140.0 µs | 192.8 µs–193.3 µs | 8,845–10.0 µs |
+| ours, direct, journal A, block | power loss | 1,000 | 212.2 µs–218.1 µs | 229.2 µs–231.5 µs | 9,357–10.5 µs |
+| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | 8,358–9,628 |
+| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.7 µs–20.3 µs | 32.4 µs–32.9 µs | 9,054–10.0 µs |
+| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–19.2 µs | 30.9 µs–31.8 µs | 8,755–9,548 |
 | QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 9,255–10.2 µs |
 | QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 9,213–9,814 |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 1,000 | 90.4 µs–91.6 µs | 96.4 µs–97.6 µs | 9,203–10.1 µs |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 10,000 | 31.2 µs–31.7 µs | 37.6 µs–39.1 µs | 9,355–9,918 |
 
-Order to ExecutionReport, application to application, open loop, ns, range over the runs. Highest rate sustained: QuickFIX 1.16.0, file store 20,000/s; QuickFIX 1.16.0, PersistMessages=N 50,000/s. The guarantees, the method and every rate: [RESULTS.md](RESULTS.md).
+Order to ExecutionReport, application to application, open loop, ns, range over the runs. Highest rate sustained: ours, pipeline, journal A, busy-poll 100,000/s; ours, direct, journal A, block 1,000/s; ours, direct, journal C, busy-poll 100,000/s; QuickFIX 1.16.0, file store 20,000/s; QuickFIX 1.16.0, PersistMessages=N 50,000/s. The guarantees, the method and every rate: [RESULTS.md](RESULTS.md).
 <!-- /results -->
 
 The gateway's own cost per message, by stage:
