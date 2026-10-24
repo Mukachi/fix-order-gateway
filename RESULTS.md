@@ -11,7 +11,7 @@ HP ProLiant DL380 Gen9, BIOS P89 (08/29/2024); 2 × Intel(R) Xeon(R) CPU E5-2699
 | codec (note 009) | 3 | 2026-10-22 19:20 UTC | 1f21799 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | store (note 004) | 3 | 2026-10-23 00:33 UTC | 8e844c5 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | net (note 005) | 9 | 2026-10-23 19:02 UTC | 2f1697d | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
-| order (note 008) | 3 | 2026-10-24 18:00 UTC | 140d81b | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
+| order (note 008) | 3 | 2026-10-24 18:57 UTC | 137d08e | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | order_qf (note 008) | 3 | 2026-10-24 17:11 UTC | 92817c9 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | stage (note 008) | 3 | 2026-10-24 17:25 UTC | 92817c9 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
 | stage_qf (note 008) | 3 | 2026-10-24 17:25 UTC | 92817c9 | performance | C1 C1E C3 C6 POLL | on | off | yes | 2-21,46-65 |
@@ -127,19 +127,19 @@ Application to application, open loop: limit NewOrderSingles submitted on a fixe
 
 | Configuration | Survives | Offered /s | p50 | p99 | p99.9 | max | Venue p50 |
 |---|---|---|---|---|---|---|---|
-| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.2 µs–116.1 µs | 125.9 µs–129.0 µs | 174.2 µs–219.6 µs | 2,038.7 µs–2,059.5 µs | 9,146–10.4 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 139.6 µs–140.0 µs | 192.8 µs–193.3 µs | 201.7 µs–223.6 µs | 1,133.8 µs–2,033.0 µs | 8,845–10.0 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 20,000 | 150.8 µs–151.3 µs | 179.7 µs–180.2 µs | 200.0 µs–223.0 µs | 1,143.5 µs–1,213.0 µs | 8,822–9,864 |
-| ours, pipeline, journal A, busy-poll | power loss | 50,000 | 160.6 µs–162.6 µs | 196.9 µs–201.5 µs | 218.0 µs–820.2 µs | 914.8 µs–1,996.4 µs | 9,233–10.4 µs |
-| ours, pipeline, journal A, busy-poll | power loss | 100,000 | 235.6 µs–14,373.5 µs | 468.3 µs–34,470.3 µs | 1,094.1 µs–34,543.1 µs | 1,486.7 µs–34,578.6 µs | 36.6 µs–4,328.3 µs |
-| ours, direct, journal A, block | power loss | 1,000 | 212.2 µs–218.1 µs | 229.2 µs–231.5 µs | 282.2 µs–292.6 µs | 2,158.0 µs–2,319.1 µs | 9,357–10.5 µs |
-| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | not sustained | not sustained | 8,358–9,628 |
-| ours, direct, journal A, block | power loss | 20,000 | not sustained | not sustained | not sustained | not sustained | 8,669–9,943 |
-| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.7 µs–20.3 µs | 32.4 µs–32.9 µs | 38.2 µs–38.5 µs | 346.0 µs–561.0 µs | 9,054–10.0 µs |
-| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–19.2 µs | 30.9 µs–31.8 µs | 33.8 µs–35.0 µs | 62.7 µs–68.6 µs | 8,755–9,548 |
-| ours, direct, journal C, busy-poll | process crash | 20,000 | 18.5 µs–19.3 µs | 30.8 µs–31.4 µs | 33.7 µs–34.8 µs | 61.5 µs–63.0 µs | 8,749–9,620 |
-| ours, direct, journal C, busy-poll | process crash | 50,000 | 18.5 µs–19.5 µs | 32.7 µs–33.5 µs | 35.4 µs–39.6 µs | 61.8 µs–78.1 µs | 8,543–9,594 |
-| ours, direct, journal C, busy-poll | process crash | 100,000 | 48.2 µs–2,029.1 µs | 91.0 µs–7,135.1 µs | 120.4 µs–7,182.3 µs | 182.4 µs–7,239.3 µs | 16.1 µs–1,890.2 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.5 µs–118.2 µs | 125.8 µs–131.8 µs | 177.0 µs–186.6 µs | 1,983.4 µs–2,015.9 µs | 9,345–11.9 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.3 µs–142.3 µs | 193.4 µs–316.0 µs | 211.6 µs–8,409.9 µs | 1,873.3 µs–18,079.1 µs | 9,113–11.5 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 20,000 | 151.1 µs–155.1 µs | 180.2 µs–326.5 µs | 199.9 µs–1,000.6 µs | 1,163.7 µs–2,288.9 µs | 9,061–11.5 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 50,000 | 160.6 µs–169.3 µs | 196.1 µs–205.1 µs | 225.4 µs–1,790.2 µs | 889.8 µs–2,531.4 µs | 9,338–11.9 µs |
+| ours, pipeline, journal A, busy-poll | power loss | 100,000 | not sustained | not sustained | not sustained | not sustained | 44.0 µs–4,773.9 µs |
+| ours, direct, journal A, block | power loss | 1,000 | 215.0 µs–217.7 µs | 230.3 µs–232.1 µs | 272.3 µs–306.4 µs | 2,046.0 µs–2,264.4 µs | 9,695–12.1 µs |
+| ours, direct, journal A, block | power loss | 10,000 | not sustained | not sustained | not sustained | not sustained | 8,698–11.5 µs |
+| ours, direct, journal A, block | power loss | 20,000 | not sustained | not sustained | not sustained | not sustained | 8,996–12.0 µs |
+| ours, direct, journal C, busy-poll | process crash | 1,000 | 19.9 µs–22.1 µs | 27.0 µs–32.2 µs | 37.9 µs–40.6 µs | 694.4 µs–727.6 µs | 9,275–11.6 µs |
+| ours, direct, journal C, busy-poll | process crash | 10,000 | 18.4 µs–20.9 µs | 22.7 µs–25.7 µs | 25.6 µs–28.9 µs | 65.4 µs–81.2 µs | 8,849–11.2 µs |
+| ours, direct, journal C, busy-poll | process crash | 20,000 | 18.6 µs–20.9 µs | 22.8 µs–25.6 µs | 26.0 µs–29.1 µs | 68.5 µs–74.3 µs | 9,030–11.2 µs |
+| ours, direct, journal C, busy-poll | process crash | 50,000 | 18.7 µs–21.9 µs | 23.7 µs–32.3 µs | 38.5 µs–51.9 µs | 83.9 µs–102.8 µs | 8,939–11.2 µs |
+| ours, direct, journal C, busy-poll | process crash | 100,000 | not sustained | not sustained | not sustained | not sustained | 9,040–4,669.4 µs |
 | QuickFIX 1.16.0, file store | process crash | 1,000 | 103.7 µs–105.6 µs | 114.7 µs–117.0 µs | 127.8 µs–129.9 µs | 224.4 µs–694.6 µs | 9,255–10.2 µs |
 | QuickFIX 1.16.0, file store | process crash | 10,000 | 46.5 µs–48.1 µs | 55.2 µs–57.7 µs | 58.9 µs–61.5 µs | 157.0 µs–174.9 µs | 9,213–9,814 |
 | QuickFIX 1.16.0, file store | process crash | 20,000 | 47.4 µs–53.0 µs | 82.1 µs–88.5 µs | 87.5 µs–90.3 µs | 97.9 µs–192.0 µs | 9,253–9,823 |
@@ -150,7 +150,7 @@ Application to application, open loop: limit NewOrderSingles submitted on a fixe
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 50,000 | 44.4 µs–53.5 µs | 76.9 µs–109.0 µs | 91.3 µs–135.3 µs | 118.0 µs–174.8 µs | 8,758–9,298 |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 100,000 | not sustained | not sustained | not sustained | not sustained | 8,669–9,229 |
 
-Highest rate sustained in every run: ours, pipeline, journal A, busy-poll: 100,000/s; ours, direct, journal A, block: 1,000/s; ours, direct, journal C, busy-poll: 100,000/s; QuickFIX 1.16.0, file store: 20,000/s; QuickFIX 1.16.0, PersistMessages=N: 50,000/s.
+Highest rate sustained in every run: ours, pipeline, journal A, busy-poll: 50,000/s; ours, direct, journal A, block: 1,000/s; ours, direct, journal C, busy-poll: 50,000/s; QuickFIX 1.16.0, file store: 20,000/s; QuickFIX 1.16.0, PersistMessages=N: 50,000/s.
 
 ## The gateway's cost per message, by stage (note 008)
 
