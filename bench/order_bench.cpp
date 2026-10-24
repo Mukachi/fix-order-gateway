@@ -26,6 +26,7 @@
 #include <lfipc/bench/overhead.hpp>
 #include <lfipc/bench/run_file.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -87,20 +88,44 @@ struct point {
 };
 
 // The venue's figures for its connection `k`, once it has written them.
-venue_figures read_venue(const std::string& dir, int k) {
+// The venue's figures for one point: the files it wrote for the connections
+// made during it (`before`: the files there when the point started), the one
+// with the most orders (a point that fell behind may have reconnected).
+venue_figures read_venue(const std::string& dir, const std::vector<std::string>& before) {
     venue_figures v;
-    const std::string path = dir + "/venue-" + std::to_string(k) + ".txt";
-    for (int i = 0; i < 30000 && !std::filesystem::exists(path); ++i) ::usleep(1000);  // a point that fell behind: the venue drains it first
-    std::ifstream f(path);
-    std::string w;
-    double conn;
-    if (f >> w >> conn >> w >> v.samples >> w >> v.p50 >> w >> v.p99 >> w >> v.p999 >> w >> v.max) v.read = true;
+    const auto fresh = [&] {
+        std::vector<std::string> out;
+        for (const auto& e : std::filesystem::directory_iterator(dir)) {
+            const std::string n = e.path().filename().string();
+            if (n.starts_with("venue-") && n.ends_with(".txt") && std::find(before.begin(), before.end(), n) == before.end())
+                out.push_back(e.path().string());
+        }
+        return out;
+    };
+    for (int i = 0; i < 30000 && fresh().empty(); ++i) ::usleep(1000);  // a point that fell behind: the venue drains it first
+    ::usleep(200'000);  // a second connection's file, if any
+    for (const auto& path : fresh()) {
+        std::ifstream f(path);
+        std::string w;
+        double conn;
+        venue_figures c;
+        if (f >> w >> conn >> w >> c.samples >> w >> c.p50 >> w >> c.p99 >> w >> c.p999 >> w >> c.max) {
+            c.read = c.samples > 0;
+            if (c.samples > v.samples) v = c;
+        }
+    }
     return v;
+}
+std::vector<std::string> venue_files(const std::string& dir) {
+    std::vector<std::string> out;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) out.push_back(e.path().filename().string());
+    return out;
 }
 
 // The application's side of a point.
+// `doorbell`: the direct loop's, so a blocking engine wakes for each order (-1: none).
 template <class Connected>
-void drive(fx::app_ring& in, fx::app_ring& out, double rate, double tpn, Connected connected, point& r) {
+void drive(fx::app_ring& in, fx::app_ring& out, double rate, double tpn, Connected connected, point& r, int doorbell = -1) {
     const std::size_t n = warmup + samples;
     std::vector<std::string> bodies(n);
     for (std::size_t i = 0; i < n; ++i)
@@ -129,7 +154,7 @@ void drive(fx::app_ring& in, fx::app_ring& out, double rate, double tpn, Connect
     for (std::size_t i = 0; i < n; ++i) {
         if (i == 0) {  // the first waits for the session; the schedule starts when it is back
             due[0] = start();
-            while (!fx::submit_order(in, "D", bodies[0])) {
+            while (!fx::submit_order(in, "D", bodies[0], doorbell)) {
             }
             for (int k = 0; k < 200'000'000 && received == 0; ++k) collect();
             t0 = start() + interval;
@@ -137,7 +162,7 @@ void drive(fx::app_ring& in, fx::app_ring& out, double rate, double tpn, Connect
         }
         due[i] = t0 + interval * (i - 1);
         while (start() < due[i]) collect();
-        while (!fx::submit_order(in, "D", bodies[i])) collect();
+        while (!fx::submit_order(in, "D", bodies[i], doorbell)) collect();
     }
     const ticks give_up = start() + static_cast<ticks>(10e9 * tpn);
     while (received < n && start() < give_up) collect();
@@ -193,7 +218,7 @@ point direct(std::uint16_t port, double rate, double tpn, const std::string& dir
         detail::pin_to(engine_cpu);
         e.run(stop_flag);
     });
-    drive(*in, *out, rate, tpn, [&] { return e.connected(); }, r);
+    drive(*in, *out, rate, tpn, [&] { return e.connected(); }, r, e.doorbell());
     stop_flag = true;
     t.join();
     std::filesystem::remove(path);
@@ -234,8 +259,9 @@ int main(int argc, char** argv) {
     std::vector<point> points;
     int k = 0;
     const auto run_point = [&](auto&& measure, double rate) {
+        const auto before = venue_files(venue_dir);
         point p = measure(rate, k);
-        p.venue = read_venue(venue_dir, k);
+        p.venue = read_venue(venue_dir, before);
         ++k;
         std::printf("%-5s %-8s %s %-9s %7.0f/s %s: p50 %9.1f p99 %9.1f p99.9 %9.1f max %10.1f ns  sustained %8.0f  venue p50 %6.0f ns\n",
                     p.gateway.c_str(), p.loop.c_str(), p.journal.c_str(), p.wait.c_str(), p.rate, p.complete ? "   " : "INC",

@@ -36,6 +36,7 @@
 #include <lfipc/bench/overhead.hpp>
 #include <lfipc/bench/run_file.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -65,15 +66,38 @@ struct venue_figures {
     std::size_t samples = 0;
     double p50 = 0, p99 = 0, p999 = 0, max = 0;
 };
-venue_figures read_venue(const std::string& dir, int k) {
+// The venue's figures for one point: the files it wrote for the connections
+// made during it (`before`: the files there when the point started), the one
+// with the most orders (a point that fell behind may have reconnected).
+venue_figures read_venue(const std::string& dir, const std::vector<std::string>& before) {
     venue_figures v;
-    const std::string path = dir + "/venue-" + std::to_string(k) + ".txt";
-    for (int i = 0; i < 30000 && !std::filesystem::exists(path); ++i) ::usleep(1000);
-    std::ifstream f(path);
-    std::string w;
-    double conn;
-    if (f >> w >> conn >> w >> v.samples >> w >> v.p50 >> w >> v.p99 >> w >> v.p999 >> w >> v.max) v.read = true;
+    const auto fresh = [&] {
+        std::vector<std::string> out;
+        for (const auto& e : std::filesystem::directory_iterator(dir)) {
+            const std::string n = e.path().filename().string();
+            if (n.starts_with("venue-") && n.ends_with(".txt") && std::find(before.begin(), before.end(), n) == before.end())
+                out.push_back(e.path().string());
+        }
+        return out;
+    };
+    for (int i = 0; i < 30000 && fresh().empty(); ++i) ::usleep(1000);  // a point that fell behind: the venue drains it first
+    ::usleep(200'000);  // a second connection's file, if any
+    for (const auto& path : fresh()) {
+        std::ifstream f(path);
+        std::string w;
+        double conn;
+        venue_figures c;
+        if (f >> w >> conn >> w >> c.samples >> w >> c.p50 >> w >> c.p99 >> w >> c.p999 >> w >> c.max) {
+            c.read = c.samples > 0;
+            if (c.samples > v.samples) v = c;
+        }
+    }
     return v;
+}
+std::vector<std::string> venue_files(const std::string& dir) {
+    std::vector<std::string> out;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) out.push_back(e.path().filename().string());
+    return out;
 }
 
 class client : public FIX::Application {
@@ -310,8 +334,9 @@ int main(int argc, char** argv) {
     int k = 0;
     for (const bool persist : {true, false}) {
         for (const double rate : {1'000.0, 10'000.0, 20'000.0, 50'000.0, 100'000.0}) {
+            const auto before = venue_files(venue_dir);
             point p = measure(port, dictionary, dir, persist, rate, tpn, k);
-            p.venue = read_venue(venue_dir, k);
+            p.venue = read_venue(venue_dir, before);
             ++k;
             std::printf("qfix  %-18s %7.0f/s %s: p50 %9.1f p99 %9.1f p99.9 %9.1f max %10.1f ns  sustained %8.0f  threads %d  venue p50 %6.0f ns\n",
                         p.store.c_str(), p.rate, p.complete ? "   " : "INC", static_cast<double>(p.cost.p50) / tpn,
