@@ -105,7 +105,9 @@ public:
     // Pre-filled (note 008's amendment, as D5 does for A): the file's blocks
     // written at creation, so no write through the mapping makes the file
     // system allocate them on the order path (on ext4 a stall of ~150 us
-    // about every megabyte of journal), and the mapping faulted in.
+    // about every megabyte of journal). Not populated: MAP_POPULATE maps a
+    // shared file's pages read-only, and each first write then takes a
+    // write-protect fault on the order path (measured: +8 us at p99).
     bool create(const std::string& path, std::uint32_t epoch, std::size_t capacity) {
         if (!map(path, O_CREAT | O_EXCL, capacity, true)) return false;
         std::memcpy(base_, journal_format::magic.data(), journal_format::magic.size());
@@ -151,7 +153,7 @@ private:
             }
             if (::fdatasync(fd_) != 0) return false;
         }
-        void* m = ::mmap(nullptr, capacity, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd_, 0);
+        void* m = ::mmap(nullptr, capacity, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
         if (m == MAP_FAILED) return false;
         base_ = static_cast<char*>(m);
         capacity_ = capacity;
