@@ -1,6 +1,6 @@
 # 008 — Measurement
 
-**Status:** Draft · **Updated:** 2026-10-24
+**Status:** Agreed · **Updated:** 2026-10-24
 
 ## Proposal
 
@@ -118,7 +118,7 @@ flowchart LR
 
 ## Tasks
 
-- [ ] Shep: agree D1–D6
+- [x] Shep: agree D1–D6
 - [ ] `net_bench`'s order bodies made valid FIX 4.4 (they lack TransactTime, 60, and note 007's
       outbound check now refuses them)
 - [ ] The venue process (session and simulator), its turnaround measured
@@ -131,3 +131,4 @@ flowchart LR
 | Date | Stage | Finding |
 |---|---|---|
 | 2026-10-24 | Draft | Written for review. QuickFIX's store observed: `executor` under an `LD_PRELOAD` shim counting `fsync`, `fdatasync`, `msync` and `fflush`: 0, 0, 0 and 1,626 for 200 orders and their reports (config as documented, `PersistMessages` default Y per its shipped `doc/html/configuration.html`; the web page says N, the shipped copy Y); no sync setting documented. `net_bench`'s order bodies found invalid under note 007's outbound check (no TransactTime): fixed in this note's first task |
+| 2026-10-24 | Agreed | Approved by Shep, every decision as proposed (option A each): D1 application to application; D2 our venue simulator in its own process for both, its turnaround reported; D3 two guarantee levels (process crash: ours C against QuickFIX's file store; power loss: ours A, QuickFIX's row stating it has no documented option) and QuickFIX with `PersistMessages=N` for reference; D4 ours pinned per thread, QuickFIX's process confined to as many reserved CPUs as it has threads; D5 1,000 and 10,000 a second and the highest sustained, 100,000 orders a point, loopback; D6 our cost per message by stage beside QuickFIX's parse and validation |
