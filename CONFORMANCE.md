@@ -5,8 +5,9 @@ Basis: *FIX Session Layer Test Cases*, Version 1.0, June 2020, FIX Protocol Limi
 order. Design: [note 006](docs/design/006-conformance.md). Each result shown by the test lists what it
 checked; a case not shown says why.
 
-Case numbers and titles (the Condition column) are from *FIX Session Layer Test Cases*
-© FIX Protocol Limited, licensed under [CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/).
+Case numbers follow *FIX Session Layer Test Cases* (© FIX Protocol Limited, licensed under
+[CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/)); the Condition column is a one-line summary of
+each case written for this table, not the document's text, which is the authority.
 
 85 cases: 1 mandatory not applicable, 69 mandatory pass, 13 optional not implemented, 2 optional pass.
 

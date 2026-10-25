@@ -720,8 +720,9 @@ def conformance(root, check, test, matrices_test=None):
         "Basis: *FIX Session Layer Test Cases*, Version 1.0, June 2020, FIX Protocol Limited, every case in its\n"
         "order. Design: [note 006](docs/design/006-conformance.md). Each result shown by the test lists what it\n"
         "checked; a case not shown says why.\n\n"
-        "Case numbers and titles (the Condition column) are from *FIX Session Layer Test Cases*\n"
-        "© FIX Protocol Limited, licensed under [CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/).\n\n"
+        "Case numbers follow *FIX Session Layer Test Cases* (© FIX Protocol Limited, licensed under\n"
+        "[CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/)); the Condition column is a one-line summary of\n"
+        "each case written for this table, not the document's text, which is the authority.\n\n"
         f"{len(CASES)} cases: {summary}.\n\n"
         "| Case | Mandatory | Condition | Result | Shown by, or why not |\n|---|---|---|---|---|\n"
         + "\n".join(rows) + "\n")
