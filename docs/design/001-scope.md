@@ -140,7 +140,7 @@ The repo as a whole, checked as the notes reach Measured:
 
 - [x] Shep: empty GitHub repo `Mukachi/fix-order-gateway` (private)
 - [x] Read the QuickFIX licence; record the decision here
-- [ ] Notes 002–008, one at a time, each agreed before its code
+- [x] Notes 002–008, one at a time, each agreed before its code
 
 ## Review
 
