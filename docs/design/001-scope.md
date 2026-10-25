@@ -1,6 +1,6 @@
 # 001 — Scope and plan
 
-**Status:** Agreed · **Updated:** 2026-10-21
+**Status:** Agreed · **Updated:** 2026-10-25
 
 ## Proposal
 

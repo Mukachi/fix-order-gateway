@@ -1,6 +1,6 @@
 # 007 — Order entry
 
-**Status:** Measured · **Updated:** 2026-10-23
+**Status:** Measured · **Updated:** 2026-10-24
 
 ## Proposal
 

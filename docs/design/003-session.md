@@ -1,6 +1,6 @@
 # 003 — Session
 
-**Status:** Measured · **Updated:** 2026-10-22
+**Status:** Measured · **Updated:** 2026-10-24
 
 ## Proposal
 

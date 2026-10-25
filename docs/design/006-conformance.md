@@ -1,6 +1,6 @@
 # 006 — Conformance
 
-**Status:** Measured · **Updated:** 2026-10-23
+**Status:** Measured · **Updated:** 2026-10-25
 
 ## Proposal
 
@@ -124,7 +124,7 @@ the engines have no logout for the application, and the test must drop the conne
 the engines' transport is note 005's, tested there.
 
 Each: log on, 2,000 orders and their reports in order, the connection dropped by our side after
-700 reports with orders in flight and restored with a resend of what was missed, log out. Configuration files ours. Rule
+700 reports with orders in flight and restored with a resend of what was missed, log out. Configuration files written for this repository. Rule
 kept (note 001): QuickFIX's source is not read; what we use is its documentation, its example
 programs as run, and its public API for the one initiator. Its acceptance-test suite (Ruby
 scripts, a cross-check in note 001) is not run here: it needs Ruby, which is not installed, and
