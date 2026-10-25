@@ -123,23 +123,23 @@ Round trip: a 200-byte message out over TCP and back from net_peer (busy-polling
 
 ## Order to ExecutionReport (note 008)
 
-Application to application, open loop: limit NewOrderSingles submitted on a fixed schedule, latency from each order's scheduled time to its ExecutionReport (New) reaching the application; 100,000 orders a point after 5,000 of warm-up; over loopback to order_venue (our venue simulator behind an acceptor session, its own process, busy-polling on its own core), the same venue for both gateways. Ours: the application on CPU 2, the engine on 4 (the pipeline's journal and sender stages on 6 and 8). QuickFIX: a program written to its documented API, the application thread on CPU 2 and its other threads confined to as many reserved CPUs as there are. 'Survives' is the configuration's guarantee: QuickFIX's file store never syncs (counted: 0 fsync and 0 fdatasync calls), so it survives a process crash like our journal C; our journal A makes each input durable with fdatasync first and survives power loss, which QuickFIX documents no setting for. 'Venue p50' is the venue's own turnaround, read to written. Journal files: A on ext4, C on tmpfs. order: 3 runs; order_qf: 3 runs.
+Application to application, open loop: limit NewOrderSingles submitted on a fixed schedule, latency from each order's scheduled time to its ExecutionReport (New) reaching the application; 100,000 orders a point after 5,000 of warm-up; over loopback to order_venue (our venue simulator behind an acceptor session, its own process, busy-polling on its own core), the same venue for both gateways. fixgw (this gateway): the application on CPU 2, the engine on 4 (the pipeline's journal and sender stages on 6 and 8). QuickFIX: a program written to its documented API, the application thread on CPU 2 and its other threads confined to as many reserved CPUs as there are. 'Survives' is the configuration's guarantee: QuickFIX's file store never syncs (counted: 0 fsync and 0 fdatasync calls), so it survives a process crash like our journal C; our journal A makes each input durable with fdatasync first and survives power loss, which QuickFIX documents no setting for. 'Venue p50' is the venue's own turnaround, read to written. Journal files: A on ext4, C on tmpfs. order: 3 runs; order_qf: 3 runs.
 
 | Configuration | Survives | Offered /s | p50 | p99 | p99.9 | max | Venue p50 |
 |---|---|---|---|---|---|---|---|
-| ours, pipeline, journal A, busy-poll | power loss | 1,000 | 115.2 µs–116.1 µs | 125.7 µs–129.2 µs | 153.1 µs–211.0 µs | 1,838.1 µs–2,047.8 µs | 9,526–9,948 |
-| ours, pipeline, journal A, busy-poll | power loss | 10,000 | 140.0 µs–140.3 µs | 193.3 µs–194.1 µs | 209.6 µs–454.3 µs | 1,109.2 µs–2,141.3 µs | 9,054–9,541 |
-| ours, pipeline, journal A, busy-poll | power loss | 20,000 | 150.7 µs–154.0 µs | 180.1 µs–324.3 µs | 199.8 µs–340.5 µs | 1,149.3 µs–1,181.6 µs | 9,227–9,538 |
-| ours, pipeline, journal A, busy-poll | power loss | 50,000 | 163.5 µs–164.1 µs | 203.7 µs–205.0 µs | 227.5 µs–887.8 µs | 1,277.9 µs–1,966.6 µs | 9,569–9,893 |
-| ours, pipeline, journal A, busy-poll | power loss | 100,000 | 206.8 µs–209.3 µs | 264.5 µs–275.8 µs | 286.5 µs–929.2 µs | 322.7 µs–1,422.1 µs | 16.8 µs–17.8 µs |
-| ours, direct, journal A, block | power loss | 1,000 | 214.7 µs–217.9 µs | 230.3 µs–231.3 µs | 267.3 µs–283.2 µs | 2,074.1 µs–2,299.1 µs | 9.8–10.1 µs |
-| ours, direct, journal A, block | power loss | 10,000 | 253.2 µs–257.2 µs | 353.7 µs–359.0 µs | 1,090.3 µs–2,733.6 µs | 2,981.8 µs–5,765.7 µs | 8,961–9,440 |
-| ours, direct, journal A, block | power loss | 20,000 | not sustained | not sustained | not sustained | not sustained | 8,936–9,458 |
-| ours, direct, journal C, busy-poll | process crash | 1,000 | 20.1 µs–20.6 µs | 25.2 µs–25.7 µs | 28.1 µs–29.5 µs | 35.4 µs–55.9 µs | 9,249–9,691 |
-| ours, direct, journal C, busy-poll | process crash | 10,000 | 19.0 µs–19.1 µs | 23.9 µs–24.1 µs | 26.2 µs–26.3 µs | 30.0 µs–31.5 µs | 9,013–9,257 |
-| ours, direct, journal C, busy-poll | process crash | 20,000 | 18.7 µs–19.1 µs | 23.6 µs–24.1 µs | 25.7 µs–26.4 µs | 29.7 µs–30.7 µs | 8,931–9,382 |
-| ours, direct, journal C, busy-poll | process crash | 50,000 | 18.8 µs–19.2 µs | 24.1 µs–24.9 µs | 31.4 µs–32.1 µs | 35.1 µs–36.8 µs | 8,950–9,409 |
-| ours, direct, journal C, busy-poll | process crash | 100,000 | 33.6 µs–34.1 µs | 54.7 µs–56.5 µs | 65.1 µs–67.7 µs | 79.4 µs–81.9 µs | 8,922–9,198 |
+| fixgw, pipeline, journal A, busy-poll | power loss | 1,000 | 115.2 µs–116.1 µs | 125.7 µs–129.2 µs | 153.1 µs–211.0 µs | 1,838.1 µs–2,047.8 µs | 9,526–9,948 |
+| fixgw, pipeline, journal A, busy-poll | power loss | 10,000 | 140.0 µs–140.3 µs | 193.3 µs–194.1 µs | 209.6 µs–454.3 µs | 1,109.2 µs–2,141.3 µs | 9,054–9,541 |
+| fixgw, pipeline, journal A, busy-poll | power loss | 20,000 | 150.7 µs–154.0 µs | 180.1 µs–324.3 µs | 199.8 µs–340.5 µs | 1,149.3 µs–1,181.6 µs | 9,227–9,538 |
+| fixgw, pipeline, journal A, busy-poll | power loss | 50,000 | 163.5 µs–164.1 µs | 203.7 µs–205.0 µs | 227.5 µs–887.8 µs | 1,277.9 µs–1,966.6 µs | 9,569–9,893 |
+| fixgw, pipeline, journal A, busy-poll | power loss | 100,000 | 206.8 µs–209.3 µs | 264.5 µs–275.8 µs | 286.5 µs–929.2 µs | 322.7 µs–1,422.1 µs | 16.8 µs–17.8 µs |
+| fixgw, direct, journal A, block | power loss | 1,000 | 214.7 µs–217.9 µs | 230.3 µs–231.3 µs | 267.3 µs–283.2 µs | 2,074.1 µs–2,299.1 µs | 9.8–10.1 µs |
+| fixgw, direct, journal A, block | power loss | 10,000 | 253.2 µs–257.2 µs | 353.7 µs–359.0 µs | 1,090.3 µs–2,733.6 µs | 2,981.8 µs–5,765.7 µs | 8,961–9,440 |
+| fixgw, direct, journal A, block | power loss | 20,000 | not sustained | not sustained | not sustained | not sustained | 8,936–9,458 |
+| fixgw, direct, journal C, busy-poll | process crash | 1,000 | 20.1 µs–20.6 µs | 25.2 µs–25.7 µs | 28.1 µs–29.5 µs | 35.4 µs–55.9 µs | 9,249–9,691 |
+| fixgw, direct, journal C, busy-poll | process crash | 10,000 | 19.0 µs–19.1 µs | 23.9 µs–24.1 µs | 26.2 µs–26.3 µs | 30.0 µs–31.5 µs | 9,013–9,257 |
+| fixgw, direct, journal C, busy-poll | process crash | 20,000 | 18.7 µs–19.1 µs | 23.6 µs–24.1 µs | 25.7 µs–26.4 µs | 29.7 µs–30.7 µs | 8,931–9,382 |
+| fixgw, direct, journal C, busy-poll | process crash | 50,000 | 18.8 µs–19.2 µs | 24.1 µs–24.9 µs | 31.4 µs–32.1 µs | 35.1 µs–36.8 µs | 8,950–9,409 |
+| fixgw, direct, journal C, busy-poll | process crash | 100,000 | 33.6 µs–34.1 µs | 54.7 µs–56.5 µs | 65.1 µs–67.7 µs | 79.4 µs–81.9 µs | 8,922–9,198 |
 | QuickFIX 1.16.0, file store | process crash | 1,000 | 103.8 µs–107.6 µs | 114.4 µs–119.0 µs | 127.4 µs–131.2 µs | 240.5 µs–732.8 µs | 9.6–12.2 µs |
 | QuickFIX 1.16.0, file store | process crash | 10,000 | 47.1 µs–50.4 µs | 55.7 µs–59.9 µs | 59.2 µs–63.5 µs | 66.8 µs–159.0 µs | 9.4–12.0 µs |
 | QuickFIX 1.16.0, file store | process crash | 20,000 | 48.6 µs–77.6 µs | 85.7 µs–87.7 µs | 88.1 µs–89.4 µs | 94.6 µs–104.2 µs | 9.2–11.9 µs |
@@ -150,7 +150,7 @@ Application to application, open loop: limit NewOrderSingles submitted on a fixe
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 50,000 | 49.8 µs–54.5 µs | 83.4 µs–104.0 µs | 102.1 µs–139.6 µs | 122.3 µs–177.6 µs | 8.9–11.3 µs |
 | QuickFIX 1.16.0, PersistMessages=N | nothing persisted | 100,000 | not sustained | not sustained | not sustained | not sustained | 8.8–11.1 µs |
 
-Highest rate sustained in every run: ours, pipeline, journal A, busy-poll: ≥ 100,000/s; ours, direct, journal A, block: 10,000/s; ours, direct, journal C, busy-poll: ≥ 100,000/s; QuickFIX 1.16.0, file store: 20,000/s; QuickFIX 1.16.0, PersistMessages=N: 50,000/s.
+Highest rate sustained in every run: fixgw, pipeline, journal A, busy-poll: ≥ 100,000/s; fixgw, direct, journal A, block: 10,000/s; fixgw, direct, journal C, busy-poll: ≥ 100,000/s; QuickFIX 1.16.0, file store: 20,000/s; QuickFIX 1.16.0, PersistMessages=N: 50,000/s.
 
 ## The gateway's cost per message, by stage (note 008)
 
@@ -158,20 +158,20 @@ In process, no network: each call timed between start() and stop() on CPU 2, uns
 
 | Gateway | Message | Stage | p50 | p99 | p99.9 |
 |---|---|---|---|---|---|
-| ours | - | none | 16 | 17 | 17 |
-| ours | ExecutionReport in | framing and decoding | 305 | 418–424 | 609–636 |
-| ours | ExecutionReport in | dictionary check (note 006) | 795–812 | 817–840 | 826–847 |
-| ours | ExecutionReport in | order book (note 007) | 296–301 | 674–692 | 841–940 |
-| ours | ExecutionReport in | session, the whole inbound path | 1,273–1,281 | 1,374–1,416 | 1,541–1,667 |
-| ours | ExecutionReport in | journaled session (book, journal C), inbound | 1,940–1,959 | 3,575–3,594 | 3,885–3,909 |
-| ours | NewOrderSingle out | body checks (note 007) | 1,243–1,367 | 1,393–1,538 | 1,575–1,764 |
-| ours | NewOrderSingle out | order book check and record (note 007) | 324–329 | 800–805 | 1,062–1,069 |
-| ours | NewOrderSingle out | session send (encode, store) | 151–152 | 178–223 | 206–320 |
-| ours | NewOrderSingle out | journaled session send (checks, book, encode, journal C) | 1,888–1,895 | 4,072–4,086 | 6,433–6,458 |
+| fixgw | - | none | 16 | 17 | 17 |
+| fixgw | ExecutionReport in | framing and decoding | 305 | 418–424 | 609–636 |
+| fixgw | ExecutionReport in | dictionary check (note 006) | 795–812 | 817–840 | 826–847 |
+| fixgw | ExecutionReport in | order book (note 007) | 296–301 | 674–692 | 841–940 |
+| fixgw | ExecutionReport in | session, the whole inbound path | 1,273–1,281 | 1,374–1,416 | 1,541–1,667 |
+| fixgw | ExecutionReport in | journaled session (book, journal C), inbound | 1,940–1,959 | 3,575–3,594 | 3,885–3,909 |
+| fixgw | NewOrderSingle out | body checks (note 007) | 1,243–1,367 | 1,393–1,538 | 1,575–1,764 |
+| fixgw | NewOrderSingle out | order book check and record (note 007) | 324–329 | 800–805 | 1,062–1,069 |
+| fixgw | NewOrderSingle out | session send (encode, store) | 151–152 | 178–223 | 206–320 |
+| fixgw | NewOrderSingle out | journaled session send (checks, book, encode, journal C) | 1,888–1,895 | 4,072–4,086 | 6,433–6,458 |
 | QuickFIX 1.16.0 | - | none | 16 | 17 | 17 |
 | QuickFIX 1.16.0 | ExecutionReport in | FIX::Message from the bytes, the FIX 4.4 dictionary validating | 2,057–2,060 | 2,135–2,163 | 2,251–2,276 |
 
-Ours, run by run: each stage's p50 and its branch mispredictions per message, counted over the stage's whole loop (what it does outside the window included: the dictionary check's and the order book's include the decoding before them).
+fixgw, run by run: each stage's p50 and its branch mispredictions per message, counted over the stage's whole loop (what it does outside the window included: the dictionary check's and the order book's include the decoding before them).
 
 | Stage | run 1: p50, mispredictions | run 2: p50, mispredictions | run 3: p50, mispredictions |
 |---|---|---|---|

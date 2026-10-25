@@ -361,7 +361,7 @@ def config_name(key):
     gateway, loop, journal, wait, _ = key
     if gateway == "quickfix":
         return f"QuickFIX 1.16.0, {journal}"
-    return f"ours, {loop}, journal {journal}, {wait}"
+    return f"fixgw, {loop}, journal {journal}, {wait}"
 
 
 def order_rows(lf, sets, rates=None, figures=("p50_ns", "p99_ns", "p999_ns", "max_ns")):
@@ -411,7 +411,7 @@ def order_section(lf, sets):
            "Application to application, open loop: limit NewOrderSingles submitted on a fixed schedule, latency from each "
            "order's scheduled time to its ExecutionReport (New) reaching the application; 100,000 orders a point after 5,000 "
            "of warm-up; over loopback to order_venue (our venue simulator behind an acceptor session, its own process, "
-           "busy-polling on its own core), the same venue for both gateways. Ours: the application on CPU 2, the engine on 4 "
+           "busy-polling on its own core), the same venue for both gateways. fixgw (this gateway): the application on CPU 2, the engine on 4 "
            "(the pipeline's journal and sender stages on 6 and 8). QuickFIX: a program written to its documented API, the "
            "application thread on CPU 2 and its other threads confined to as many reserved CPUs as there are. 'Survives' "
            "is the configuration's guarantee: QuickFIX's file store never syncs (counted: 0 fsync and 0 fdatasync calls), so "
@@ -427,7 +427,7 @@ def order_section(lf, sets):
 
 def stage_rows(lf, sets):
     rows = []
-    for name, who in (("stage", "ours"), ("stage_qf", "QuickFIX 1.16.0")):
+    for name, who in (("stage", "fixgw"), ("stage_qf", "QuickFIX 1.16.0")):
         if name not in sets:
             continue
         runs = sets[name][1]
@@ -454,7 +454,7 @@ def stage_section(lf, sets):
 
 
 def stage_by_run(lf, sets):
-    """Ours, run by run: each stage's p50 beside its branch mispredictions per
+    """fixgw, run by run: each stage's p50 beside its branch mispredictions per
     message (counted over the stage's whole loop), for whether a stage's spread
     between runs follows the branch predictor (note 008)."""
     if "stage" not in sets:
@@ -471,7 +471,7 @@ def stage_by_run(lf, sets):
             m = p["mispredictions_per_message"]
             cells.append(f"{lf.ns(p['p50_ns'])}, {m:.2f}" if m >= 0 else f"{lf.ns(p['p50_ns'])}, –")
         rows.append([p0["stage"]] + cells)
-    return ["Ours, run by run: each stage's p50 and its branch mispredictions per message, counted over the stage's whole "
+    return ["fixgw, run by run: each stage's p50 and its branch mispredictions per message, counted over the stage's whole "
             "loop (what it does outside the window included: the dictionary check's and the order book's include the "
             "decoding before them).", "", lf.table(head, rows), ""]
 
