@@ -7,6 +7,8 @@ get an ADR.
   Review. Status moves Draft → Agreed → Built → Measured. Two review points: Draft → Agreed
   (approved before code) and Built → Measured (results checked against the Spec). The Review log
   keeps every finding, including the wrong turns, in the order they happened.
+- **Open items** ([open.md](open.md)): everything a Review leaves open, each with a decision
+  (fix, limit or parked). A note does not reach Measured while an item it raised has none.
 - **ADRs** (`adr/`): Context, Decision, Consequences, Status. Only for choices a reviewer might
   question; none so far: each note's decisions (D1, D2, ...) record their alternatives.
 
