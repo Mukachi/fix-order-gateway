@@ -245,8 +245,11 @@ outcome run(kind k, point at, int occurrence, int gen, bool power_loss, const st
     // D's standby, in the parent: one connection per child.
     int lfd = -1;
     std::uint16_t port = 0;
+    journal_file standby_file;
     std::thread standby;
     if (k == kind::D) {
+        // Created here, not on the thread: a power loss before the thread ran found no file.
+        standby_file.create(standby_path, 1);
         lfd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
         sockaddr_in a{};
         a.sin_family = AF_INET;
@@ -256,13 +259,11 @@ outcome run(kind k, point at, int occurrence, int gen, bool power_loss, const st
         ::listen(lfd, 4);
         ::getsockname(lfd, reinterpret_cast<sockaddr*>(&a), &len);
         port = ntohs(a.sin_port);
-        standby = std::thread([lfd, standby_path] {
-            journal_file f;
-            f.create(standby_path, 1);
+        standby = std::thread([lfd, &standby_file] {
             for (;;) {
                 const int c = ::accept(lfd, nullptr, nullptr);
                 if (c < 0) return;
-                run_standby(c, f);
+                run_standby(c, standby_file);
                 ::close(c);
             }
         });
