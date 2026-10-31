@@ -6,10 +6,14 @@
 // the venue would never catch up). Its own turnaround
 // is timed: from the bytes holding an order being read to the report's bytes
 // leaving (CLOCK_MONOTONIC); when a connection ends, its percentiles go to
-// <dir>/venue-<n>.txt, read by the benchmark into its run file.
+// <dir>/venue-<n>.txt, read by the benchmark into its run file. With
+// `stamps`, each D and G it reads is also listed, its ClOrdID and the time the
+// read that held it returned (CLOCK_MONOTONIC: the turnaround's start), in
+// <dir>/venue-<n>.orders when the connection ends: tick-to-trade's note 005
+// joins them to its orders.
 // Design: docs/design/008-measurement.md
 //
-// Usage: order_venue <port> <cpu> <connections> <dir>
+// Usage: order_venue <port> <cpu> <connections> <dir> [stamps]
 #include <fixgw/engine.hpp>
 #include <fixgw/session.hpp>
 #include <fixgw/transport.hpp>
@@ -20,6 +24,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -40,11 +45,21 @@ struct store {
     void reset() { m.clear(); }
 };
 
+// One order read, for tick-to-trade's stamps.
+struct read_order {
+    std::int64_t read_ns;
+    char type;
+    std::uint8_t id_length;
+    char id[22];
+};
+
 struct sink {
     tcp_connection* c = nullptr;
     venue_sim* sim = nullptr;
     session<sink, store>* self = nullptr;
     int orders = 0;   // in this read
+    std::int64_t read_ns = 0;
+    std::vector<read_order>* stamps = nullptr;
     std::string out;  // this read's output, sent once
     void write(std::string_view b) { out += b; }
     void send() {
@@ -58,6 +73,12 @@ struct sink {
     }
     void deliver(const message_view<>& m) {
         if (m.msg_type() == "D") ++orders;
+        if (stamps && (m.msg_type() == "D" || m.msg_type() == "G")) {
+            const std::string_view id = m.get(11).value_or("");
+            read_order r{read_ns, m.msg_type()[0], static_cast<std::uint8_t>(std::min(id.size(), sizeof(read_order::id))), {}};
+            std::memcpy(r.id, id.data(), r.id_length);
+            stamps->push_back(r);
+        }
         sim->on_message(1, m, [&](int s, std::string_view t, const std::string& b) {
             if (s == 1) self->send(t, b, clock_now());
         });
@@ -81,12 +102,13 @@ void write_summary(const std::string& path, std::vector<std::int64_t>& ns, int n
 
 int main(int argc, char** argv) {
     if (argc < 5) {
-        std::fprintf(stderr, "usage: order_venue <port> <cpu> <connections> <dir>\n");
+        std::fprintf(stderr, "usage: order_venue <port> <cpu> <connections> <dir> [stamps]\n");
         return 2;
     }
     const auto port = static_cast<std::uint16_t>(std::atoi(argv[1]));
     const int cpu = std::atoi(argv[2]), connections = std::atoi(argv[3]);
     const std::string dir = argv[4];
+    const bool stamping = argc > 5 && std::string(argv[5]) == "stamps";
     if (!lfipc::bench::detail::pin_to(cpu)) std::fprintf(stderr, "order_venue: cannot pin to CPU %d\n", cpu);
     tcp_listener l;
     if (!l.open(port)) {
@@ -114,6 +136,11 @@ int main(int argc, char** argv) {
         session<sink, store> s(cfg, sk, st);
         sk.self = &s;
         sk.out.reserve(1u << 20);
+        std::vector<read_order> stamps;
+        if (stamping) {
+            stamps.reserve(16u << 20);  // more than a run's orders: no growth while it runs
+            sk.stamps = &stamps;
+        }
         s.on_connected(clock_now());
         std::vector<std::int64_t> turnaround;
         turnaround.reserve(1u << 20);
@@ -125,6 +152,7 @@ int main(int argc, char** argv) {
             const session_time t0 = clock_now();
             if (n > 0) inbox.append(b, static_cast<std::size_t>(n));
             sk.orders = 0;
+            sk.read_ns = t0.mono_ns;
             if (!inbox.empty()) inbox.erase(0, s.on_bytes(inbox.data(), inbox.size(), t0));
             sk.send();
             if (sk.orders > 0) {
@@ -133,6 +161,12 @@ int main(int argc, char** argv) {
             }
             s.on_tick(t0);
             sk.send();
+        }
+        if (stamping) {
+            std::ofstream f(dir + "/venue-" + std::to_string(k) + ".orders.tmp");
+            for (const read_order& r : stamps) f << r.read_ns << ' ' << r.type << ' ' << std::string_view(r.id, r.id_length) << '\n';
+            f.close();
+            std::filesystem::rename(dir + "/venue-" + std::to_string(k) + ".orders.tmp", dir + "/venue-" + std::to_string(k) + ".orders");
         }
         write_summary(dir + "/venue-" + std::to_string(k) + ".txt", turnaround, k);
     }
