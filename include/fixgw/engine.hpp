@@ -166,6 +166,11 @@ public:
     // Whether a connection is up: safe from any thread (the connection itself
     // is the engine thread's alone).
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
+    // Whether the session is logged on (active: its Logon answered, not
+    // resending): safe from any thread. What an application gates new orders
+    // on; the connection alone is not enough (orders sent before the Logon's
+    // answer are held, note 003's D2).
+    bool logged_on() const noexcept { return logged_on_.load(std::memory_order_acquire); }
     // The application asked to log out, and the connection is gone: safe from
     // any thread (the engine thread publishes it).
     bool finished() const noexcept { return finished_.load(std::memory_order_acquire); }
@@ -221,6 +226,7 @@ public:
         moved |= drain_overflow();
         if (us_.state().state() == session_state::active) backoff_.reset();
         connected_.store(conn_.open() && connecting_ < 0, std::memory_order_release);
+        logged_on_.store(conn_.open() && connecting_ < 0 && us_.state().state() == session_state::active, std::memory_order_release);
         finished_.store(logging_out_ && !logout_pending_ && !conn_.open() && connecting_ < 0, std::memory_order_release);
         return moved;
     }
@@ -350,7 +356,7 @@ private:
     bool initiator_;
     int connecting_ = -1, doorbell_ = -1, epoll_ = -1;
     bool not_reading_ = false, logging_out_ = false, logout_pending_ = false;
-    std::atomic<bool> connected_{false}, finished_{false};
+    std::atomic<bool> connected_{false}, logged_on_{false}, finished_{false};
     backoff backoff_;
     std::string inbox_;
     std::deque<app_slot> overflow_;

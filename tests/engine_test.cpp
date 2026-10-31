@@ -113,6 +113,52 @@ void run_mode(wait_mode mode, bool drop_midway) {
                            : ""));
 }
 
+// logged_on() follows the session, not the connection: false while the
+// counterparty has not answered the Logon, true once it has, false again once
+// the connection is gone (tick-to-trade's note 004, D3).
+void logged_on_follows_session() {
+    tcp_listener l;
+    l.open(0);
+    engine_config ec;
+    ec.port = l.port();
+    memory_journal j;
+    yes y;
+    auto in = std::make_unique<app_ring>(), out = std::make_unique<app_ring>();
+    engine<memory_journal, yes> e(client(), ec, j, y, *in, *out);
+    std::atomic<bool> stop{false};
+    std::thread t([&] { e.run(stop); });
+    tcp_connection vc;
+    venue_sink vs;
+    vs.c = &vc;
+    venue_store vst;
+    session<venue_sink, venue_store> v(venue(), vs, vst);
+    int fd = -1;
+    for (int k = 0; k < 2'000'000 && fd < 0; ++k) fd = l.accept();
+    vc.attach(fd);
+    v.on_connected(clock_now());
+    for (int k = 0; k < 2000 && !e.connected(); ++k) ::usleep(1000);
+    ::usleep(100'000);  // the Logon arrives, unanswered
+    const bool before = e.connected() && !e.logged_on();
+    std::string inbox;
+    const std::int64_t give_up = clock_now().mono_ns + 5'000'000'000;
+    while (!e.logged_on() && clock_now().mono_ns < give_up) {
+        char b[4096];
+        long r;
+        while ((r = vc.read_some(b, sizeof(b))) > 0) inbox.append(b, static_cast<std::size_t>(r));
+        if (!inbox.empty()) inbox.erase(0, v.on_bytes(inbox.data(), inbox.size(), clock_now()));
+        vc.flush();
+        v.on_tick(clock_now());
+    }
+    const bool after = e.logged_on() && v.state() == session_state::active;
+    vc.close();
+    for (int k = 0; k < 2000 && e.logged_on(); ++k) ::usleep(1000);
+    const bool gone = !e.logged_on();
+    stop = true;
+    t.join();
+    check(before && after && gone, std::string("logged_on(): ") + (before ? "false" : "TRUE") + " while the Logon is unanswered (connected), " +
+                                       (after ? "true" : "FALSE") + " once answered, " + (gone ? "false" : "TRUE") + " once the connection is gone");
+}
+
 void ring_limits() {
     auto r = std::make_unique<app_ring>();
     check(!submit_order(*r, "D", std::string(505, 'x')) && submit_order(*r, "D", std::string(504, 'x')) &&
@@ -124,6 +170,7 @@ void ring_limits() {
 
 int main() {
     ring_limits();
+    logged_on_follows_session();
     for (const wait_mode m : {wait_mode::busy, wait_mode::block, wait_mode::spin_then_block}) run_mode(m, false);
     run_mode(wait_mode::busy, true);
     return test::result();

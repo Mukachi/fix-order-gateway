@@ -119,6 +119,8 @@ public:
     void on_durable(void (*f)(void*, std::size_t), void* ctx) noexcept { journal_.on_durable(f, ctx); }
     // Whether the session is logged on: safe from any thread.
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
+    // The same, under the direct engine's name for it.
+    bool logged_on() const noexcept { return connected(); }
     // The application asked to log out, and the connection is gone: safe from
     // any thread (the session stage publishes it).
     bool finished() const noexcept { return finished_.load(std::memory_order_acquire); }
