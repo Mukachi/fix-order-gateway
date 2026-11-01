@@ -10,10 +10,11 @@
 // `stamps`, each D and G it reads is also listed, its ClOrdID and the time the
 // read that held it returned (CLOCK_MONOTONIC: the turnaround's start), in
 // <dir>/venue-<n>.orders when the connection ends: tick-to-trade's note 005
-// joins them to its orders.
+// joins them to its orders. It listens on loopback unless given an address
+// (tick-to-trade's runs over the card: 10.99.0.2:26500, in the far namespace).
 // Design: docs/design/008-measurement.md
 //
-// Usage: order_venue <port> <cpu> <connections> <dir> [stamps]
+// Usage: order_venue [<address>:]<port> <cpu> <connections> <dir> [stamps]
 #include <fixgw/engine.hpp>
 #include <fixgw/session.hpp>
 #include <fixgw/transport.hpp>
@@ -30,6 +31,8 @@
 #include <map>
 #include <string>
 #include <vector>
+
+#include <arpa/inet.h>
 
 namespace {
 
@@ -102,17 +105,25 @@ void write_summary(const std::string& path, std::vector<std::int64_t>& ns, int n
 
 int main(int argc, char** argv) {
     if (argc < 5) {
-        std::fprintf(stderr, "usage: order_venue <port> <cpu> <connections> <dir> [stamps]\n");
+        std::fprintf(stderr, "usage: order_venue [<address>:]<port> <cpu> <connections> <dir> [stamps]\n");
         return 2;
     }
-    const auto port = static_cast<std::uint16_t>(std::atoi(argv[1]));
+    const std::string where = argv[1];
+    const std::size_t colon = where.rfind(':');
+    in_addr a{};
+    a.s_addr = htonl(INADDR_LOOPBACK);
+    if (colon != std::string::npos && ::inet_pton(AF_INET, where.substr(0, colon).c_str(), &a) != 1) {
+        std::fprintf(stderr, "order_venue: %s: not an IPv4 address\n", where.substr(0, colon).c_str());
+        return 2;
+    }
+    const auto port = static_cast<std::uint16_t>(std::atoi(where.c_str() + (colon == std::string::npos ? 0 : colon + 1)));
     const int cpu = std::atoi(argv[2]), connections = std::atoi(argv[3]);
     const std::string dir = argv[4];
     const bool stamping = argc > 5 && std::string(argv[5]) == "stamps";
     if (!lfipc::bench::detail::pin_to(cpu)) std::fprintf(stderr, "order_venue: cannot pin to CPU %d\n", cpu);
     tcp_listener l;
-    if (!l.open(port)) {
-        std::fprintf(stderr, "order_venue: cannot listen on %u\n", port);
+    if (!l.open(port, ntohl(a.s_addr))) {
+        std::fprintf(stderr, "order_venue: cannot listen on %s\n", where.c_str());
         return 1;
     }
     session_config cfg;
