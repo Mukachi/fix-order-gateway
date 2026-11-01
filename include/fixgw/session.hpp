@@ -55,6 +55,11 @@ struct session_config {
     std::size_t queue_messages = 256;  // application messages held while not logged on (D2)
     std::size_t max_body = 1024;       // largest body accepted for the queue
     std::size_t max_frame = 64 * 1024;  // largest message, either way
+    // The journaled session's store of sent messages (memory_store), reserved
+    // at construction: past it the store reallocates and copies everything in
+    // one call (tick-to-trade's note 005: 44 ms at 64 MB, 89 at 128). Size it
+    // for the session's day.
+    std::size_t store_bytes = 64u << 20, store_messages = 1u << 20;
     // Application MsgTypes this session takes (note 006, D4), space-separated:
     // another valid one is answered with BusinessMessageReject. By default the
     // order-entry messages (note 001) and BusinessMessageReject itself.

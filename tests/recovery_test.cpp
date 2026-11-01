@@ -2,7 +2,8 @@
 // and D1-D3): a journaled session, recovered from its journal, equals the one
 // that ran; outputs wait for the journal; only ticks that did something are
 // journaled. Note 008's amendment: a backlog read at once is journaled in
-// slices of at most max_frame bytes.
+// slices of at most max_frame bytes. Note 004's amendment: the store of sent
+// messages is reserved as the session's config says.
 #include "fix_text.hpp"
 #include "peer.hpp"
 
@@ -161,6 +162,43 @@ void backlog(const std::string& dir) {
           "replayed: the same numbers, the same reports, the same ExecIDs in the book");
 }
 
+// Note 004's amendment: the store is reserved from session_config, and a
+// session that stays inside the reserve never reallocates it.
+void store_reserve(const std::string& dir) {
+    const auto sends = [&](session_config cfg, int n, std::size_t& bytes_before, std::size_t& messages_before, std::size_t& bytes_after,
+                           std::size_t& messages_after) {
+        const std::string path = dir + "/store.journal";
+        std::filesystem::remove(path);
+        file_journal j;
+        j.f.create(path, 1);
+        wire w;
+        policy p;
+        peer_link l;
+        ours_t us(cfg, j, w, p);
+        bytes_before = us.store().capacity_bytes(), messages_before = us.store().capacity_messages();
+        l.peer.on_connected(at(0));
+        us.on_connected(at(0));
+        l.pump(us, w, 0, 1 << 16);
+        for (int i = 0; i < n; ++i) us.send("D", test::soh(test::order_fields("R" + std::to_string(i))), at(1));
+        l.pump(us, w, 1, 1 << 16);
+        bytes_after = us.store().capacity_bytes(), messages_after = us.store().capacity_messages();
+        j.f.close();
+    };
+    std::size_t b0, m0, b1, m1;
+    sends(ours(), 0, b0, m0, b1, m1);
+    check(b0 >= (64u << 20) && m0 >= (1u << 20), "by default the store reserves 64 MB and a million messages, as before");
+    session_config big = ours();
+    big.store_bytes = 256u << 20, big.store_messages = 4u << 20;
+    sends(big, 2'000, b0, m0, b1, m1);
+    check(b0 >= big.store_bytes && m0 >= big.store_messages && b1 == b0 && m1 == m0,
+          "reserved as configured (256 MB, 4M messages); 2,000 orders inside it: never reallocated");
+    session_config small = ours();
+    small.store_bytes = 64u << 10, small.store_messages = 100;
+    sends(small, 2'000, b0, m0, b1, m1);
+    check(b0 == small.store_bytes && m0 == small.store_messages && b1 > b0 && m1 > m0,
+          "a reserve too small for 2,000 orders: the store grows past it (the case the reserve is sized to avoid)");
+}
+
 }  // namespace
 
 int main() {
@@ -172,6 +210,7 @@ int main() {
     }
     recovery(d);
     backlog(d);
+    store_reserve(d);
     std::filesystem::remove_all(d);
     return test::result();
 }

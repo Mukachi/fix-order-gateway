@@ -50,6 +50,8 @@ public:
         index_.push_back({bytes_.size(), static_cast<std::uint32_t>(b.size())});
         bytes_.insert(bytes_.end(), b.begin(), b.end());
     }
+    std::size_t capacity_bytes() const noexcept { return bytes_.capacity(); }
+    std::size_t capacity_messages() const noexcept { return index_.capacity(); }
     std::string_view lookup(std::uint64_t seq) const {
         if (seq == 0 || seq > index_.size()) return {};
         const auto [at, n] = index_[seq - 1];
@@ -166,7 +168,8 @@ template <class Strategy, class Out, class Policy>
 class journaled_session {
 public:
     journaled_session(const session_config& cfg, Strategy& journal, Out& out, Policy& policy, const order_config& orders = {})
-        : journal_(journal), out_(out), held_(policy), session_(cfg, held_, store_), book_(orders), slice_(cfg.max_frame) {
+        : journal_(journal), out_(out), held_(policy), store_(cfg.store_bytes, cfg.store_messages), session_(cfg, held_, store_), book_(orders),
+          slice_(cfg.max_frame) {
         held_.attach(&book_);
     }
 
